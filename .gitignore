@@ -1,0 +1,28 @@
+# Go
+backend/server
+backend/*.exe
+backend/vendor/
+backend/.redis-portable/
+
+# Env fayllar (maxfiy ma'lumotlar)
+.env
+*.env
+!.env.example
+
+# Node / Frontend
+node_modules/
+dist/
+build/
+.vite/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Loglar
+*.log
