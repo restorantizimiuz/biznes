@@ -23,6 +23,13 @@ type Config struct {
 	Environment       string // "development" yoki "production"
 	TelegramBotToken  string // WebApp initData'ni tekshirish va chek yuborish uchun
 	UploadDir         string // mahsulot rasmlari saqlanadigan papka
+	// AllowedOrigins - CORS uchun ruxsat etilgan domenlar (vergul bilan).
+	// Productionda kassa, Telegram WebApp va super-admin manzillari yoziladi.
+	AllowedOrigins string
+	// SeedDemo - namunaviy "Demo Cafe" ma'lumotlarini qo'yishmi.
+	// Ishlab chiqarish bazasida bu **hech qachon** yoqilmasligi kerak:
+	// demo hisobning paroli hammaga ma'lum.
+	SeedDemo bool
 }
 
 // defaultJWTSecret - faqat lokal ishlab chiqish uchun mo'ljallangan namunaviy kalit.
@@ -49,6 +56,8 @@ func Load() *Config {
 		Environment:       getEnv("ENVIRONMENT", "development"),
 		TelegramBotToken:  getEnv("TELEGRAM_BOT_TOKEN", ""),
 		UploadDir:         getEnv("UPLOAD_DIR", "./uploads"),
+		AllowedOrigins:    getEnv("ALLOWED_ORIGINS", "*"),
+		SeedDemo:          getEnv("SEED_DEMO", "") == "true",
 	}
 
 	if cfg.Environment == "production" && cfg.JWTSecret == defaultJWTSecret {
