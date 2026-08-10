@@ -1,8 +1,22 @@
 import axios from 'axios';
 import type { MenuResponse } from './types';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8080/api/v1';
+
+// VITE_API_URL build-vaqtida JS ichiga "quyiladi" — agar deploy sozlamalarida bu
+// qiymat xato kiritilgan bo'lsa (masalan "https://" o'rniga "ttps://"), bunday
+// so'rovlar brauzer tomonidan tarmoqqa chiqmasdanoq (Network panelida ko'rinmasdan,
+// konsolda xatosiz) rad etiladi — aniqlash juda qiyin bo'ladi. Shuning uchun bu
+// yerda darhol, aniq ogohlantirish beramiz.
+if (!/^https?:\/\//.test(API_BASE_URL)) {
+  console.error(
+    `[api] VITE_API_URL noto'g'ri sozlangan: ${JSON.stringify(API_BASE_URL)} — ` +
+      `"http://" yoki "https://" bilan boshlanishi shart. Deploy sozlamalarini (Railway/Vercel) tekshiring.`,
+  );
+}
+
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:8080/api/v1',
+  baseURL: API_BASE_URL,
 });
 
 export const getMenuByTableToken = (tableToken: string) =>
