@@ -57,7 +57,15 @@ func (h *TableHandler) CreateFloor(c *fiber.Ctx) error {
 }
 
 func (h *TableHandler) ListTables(c *fiber.Ctx) error {
+	businessID := c.Locals("business_id").(string)
 	floorID := c.Params("floor_id")
+
+	var floorExists string
+	if err := h.DB.QueryRow(context.Background(),
+		`SELECT id FROM floors WHERE id=$1 AND business_id=$2`, floorID, businessID).Scan(&floorExists); err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "Qavat topilmadi"})
+	}
+
 	rows, err := h.DB.Query(context.Background(),
 		`SELECT id, name, qr_code_token, status FROM tables WHERE floor_id=$1 ORDER BY name`, floorID)
 	if err != nil {
@@ -81,6 +89,7 @@ func (h *TableHandler) ListTables(c *fiber.Ctx) error {
 }
 
 func (h *TableHandler) CreateTable(c *fiber.Ctx) error {
+	businessID := c.Locals("business_id").(string)
 	floorID := c.Params("floor_id")
 	var body struct {
 		Name string `json:"name"`
@@ -88,6 +97,13 @@ func (h *TableHandler) CreateTable(c *fiber.Ctx) error {
 	if err := c.BodyParser(&body); err != nil || body.Name == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "Stol nomi kiritilishi shart"})
 	}
+
+	var floorExists string
+	if err := h.DB.QueryRow(context.Background(),
+		`SELECT id FROM floors WHERE id=$1 AND business_id=$2`, floorID, businessID).Scan(&floorExists); err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "Qavat topilmadi"})
+	}
+
 	var id, token string
 	err := h.DB.QueryRow(context.Background(),
 		`INSERT INTO tables (floor_id, name) VALUES ($1,$2) RETURNING id, qr_code_token`,
@@ -99,22 +115,32 @@ func (h *TableHandler) CreateTable(c *fiber.Ctx) error {
 	return c.Status(201).JSON(fiber.Map{"id": id, "qr_code_token": token})
 }
 
-// GetTableQRCode - stol uchun to'liq QR-menyu havolasini qaytaradi.
-// Frontend shu URL asosida QR rasm generatsiya qiladi (masalan "qrcode" JS kutubxonasi bilan).
+// GetTableQRCode - stol uchun to'liq QR havolasini qaytaradi.
+// TELEGRAM_BOT_USERNAME sozlangan bo'lsa, havola Telegram botga chuqur havola (deep link)
+// ko'rinishida bo'ladi (?start=table_<token>) — mijoz QR'ni skanerlaganda bot ochiladi va
+// WebApp aynan shu stolga bog'langan holda ishga tushadi. Sozlanmagan bo'lsa, eski
+// QR_BASE_URL asosidagi oddiy sahifa havolasiga qaytadi (masalan hali bot ulanmagan bosqichda).
 func (h *TableHandler) GetTableQRCode(c *fiber.Ctx) error {
+	businessID := c.Locals("business_id").(string)
 	tableID := c.Params("id")
 	var token string
 	err := h.DB.QueryRow(context.Background(),
-		`SELECT qr_code_token FROM tables WHERE id=$1`, tableID).Scan(&token)
+		`SELECT t.qr_code_token FROM tables t
+		 JOIN floors f ON f.id = t.floor_id
+		 WHERE t.id=$1 AND f.business_id=$2`, tableID, businessID).Scan(&token)
 	if err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "Stol topilmadi"})
 	}
 
-	baseURL := os.Getenv("QR_BASE_URL")
-	if baseURL == "" {
-		baseURL = "https://menu.example.com"
+	var qrURL string
+	if botUsername := os.Getenv("TELEGRAM_BOT_USERNAME"); botUsername != "" {
+		qrURL = fmt.Sprintf("https://t.me/%s?start=table_%s", botUsername, token)
+	} else {
+		baseURL := os.Getenv("QR_BASE_URL")
+		if baseURL == "" {
+			baseURL = "https://menu.example.com"
+		}
+		qrURL = fmt.Sprintf("%s/t/%s", baseURL, token)
 	}
-
-	url := fmt.Sprintf("%s/t/%s", baseURL, token)
-	return c.JSON(fiber.Map{"url": url, "token": token})
+	return c.JSON(fiber.Map{"url": qrURL, "token": token})
 }

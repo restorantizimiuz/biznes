@@ -24,6 +24,11 @@ func RegisterRoutes(app *fiber.App, db *pgxpool.Pool, rdb *redis.Client, cfg *co
 	api.Get("/qr/:table_token/menu", qr.GetMenuByTableToken)
 	api.Post("/qr/:table_token/order", qr.CreateOrderFromQR)
 
+	// Telegram WebApp orqali stoldan buyurtma (mijoz Telegram initData bilan autentifikatsiya qilinadi,
+	// login shart emas). Menyuni olish uchun yuqoridagi /qr/:table_token/menu qayta ishlatiladi.
+	telegram := &TelegramHandler{DB: db, RDB: rdb, Cfg: cfg}
+	api.Post("/telegram/:table_token/order", telegram.CreateOrder)
+
 	// ---------- Himoyalangan yo'llar (token talab qilinadi) ----------
 	protected := api.Group("/", middleware.AuthRequired(cfg.JWTSecret))
 
@@ -52,6 +57,11 @@ func RegisterRoutes(app *fiber.App, db *pgxpool.Pool, rdb *redis.Client, cfg *co
 	protected.Post("/orders/:id/pay", orders.PayOrder)
 	protected.Post("/orders/:id/cancel", orders.CancelOrder)
 	protected.Post("/orders/:id/discount", orders.ApplyDiscount)
+
+	// Chek: chop etish uchun ma'lumot yoki Telegram orqali yuborish (printer bo'lmaganda)
+	receipts := &ReceiptHandler{DB: db, Cfg: cfg}
+	protected.Get("/orders/:id/receipt", receipts.GetReceipt)
+	protected.Post("/orders/:id/send-receipt-telegram", receipts.SendReceiptTelegram)
 
 	// Xodimlar (ofitsiant/kassir boshqaruvi)
 	staff := &StaffHandler{DB: db}

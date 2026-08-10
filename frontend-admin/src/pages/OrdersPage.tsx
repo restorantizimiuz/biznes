@@ -2,13 +2,13 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   cancelOrder,
-  createOrder,
+  getReceipt,
   listActiveOrders,
-  listFloors,
-  listProducts,
-  listTables,
   payOrder,
+  sendReceiptTelegram,
 } from '../api/endpoints';
+import type { ActiveOrder } from '../api/types';
+import { tryPrintReceipt } from '../printer';
 
 const STATUS_LABEL: Record<string, string> = {
   new: 'Yangi',
@@ -17,167 +17,76 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled: 'Bekor qilingan',
 };
 
-function NewOrderForm({ onClose }: { onClose: () => void }) {
-  const queryClient = useQueryClient();
-  const { data: floors = [] } = useQuery({ queryKey: ['floors'], queryFn: listFloors });
-  const [floorId, setFloorId] = useState('');
-  const { data: tables = [] } = useQuery({
-    queryKey: ['tables', floorId],
-    queryFn: () => listTables(floorId),
-    enabled: !!floorId,
-  });
-  const { data: products = [] } = useQuery({ queryKey: ['products'], queryFn: () => listProducts() });
-  const [tableId, setTableId] = useState('');
-  const [quantities, setQuantities] = useState<Record<string, number>>({});
-  const [error, setError] = useState<string | null>(null);
-
-  const mutation = useMutation({
-    mutationFn: createOrder,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['active-orders'] });
-      queryClient.invalidateQueries({ queryKey: ['tables', floorId] });
-      onClose();
-    },
-    onError: (err: any) => setError(err?.response?.data?.error ?? 'Xatolik yuz berdi'),
-  });
-
-  function submit() {
-    const items = Object.entries(quantities)
-      .filter(([, qty]) => qty > 0)
-      .map(([product_id, quantity]) => ({ product_id, quantity }));
-    if (!tableId || items.length === 0) {
-      setError('Stol va kamida bitta mahsulot tanlang');
-      return;
-    }
-    mutation.mutate({ table_id: tableId, source: 'cashier', items });
-  }
-
-  return (
-    <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4">
-      <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-6 shadow-lg">
-        <h2 className="mb-4 text-lg font-semibold text-slate-900">Yangi buyurtma</h2>
-
-        <label className="mb-1 block text-sm font-medium text-slate-700">Qavat</label>
-        <select
-          className="mb-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          value={floorId}
-          onChange={(e) => {
-            setFloorId(e.target.value);
-            setTableId('');
-          }}
-        >
-          <option value="">Tanlang...</option>
-          {floors.map((f) => (
-            <option key={f.id} value={f.id}>
-              {f.name}
-            </option>
-          ))}
-        </select>
-
-        <label className="mb-1 block text-sm font-medium text-slate-700">Stol</label>
-        <select
-          className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          value={tableId}
-          onChange={(e) => setTableId(e.target.value)}
-          disabled={!floorId}
-        >
-          <option value="">Tanlang...</option>
-          {tables.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name} {t.status !== 'empty' ? `(${t.status})` : ''}
-            </option>
-          ))}
-        </select>
-
-        <p className="mb-2 text-sm font-medium text-slate-700">Mahsulotlar</p>
-        <div className="mb-4 max-h-60 space-y-2 overflow-y-auto rounded-lg border border-slate-200 p-3">
-          {products.length === 0 && <p className="text-sm text-slate-400">Mahsulot topilmadi</p>}
-          {products.map((p) => (
-            <div key={p.id} className="flex items-center justify-between gap-2">
-              <div>
-                <p className="text-sm text-slate-800">{p.name}</p>
-                <p className="text-xs text-slate-400">{p.price.toLocaleString()} so'm</p>
-              </div>
-              <input
-                type="number"
-                min={0}
-                className="w-16 rounded-lg border border-slate-300 px-2 py-1 text-sm"
-                value={quantities[p.id] ?? 0}
-                onChange={(e) =>
-                  setQuantities((q) => ({ ...q, [p.id]: Number(e.target.value) }))
-                }
-              />
-            </div>
-          ))}
-        </div>
-
-        {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
-
-        <div className="flex justify-end gap-2">
-          <button
-            onClick={onClose}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
-          >
-            Bekor qilish
-          </button>
-          <button
-            onClick={submit}
-            disabled={mutation.isPending}
-            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
-          >
-            {mutation.isPending ? 'Saqlanmoqda...' : 'Buyurtma yaratish'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
+// Buyurtma yaratish endi faqat Telegram bot orqali (mijoz stol QR kodini skanerlab,
+// botda menyuni ochib buyurtma beradi) — kassa paneli faqat kuzatish va to'lov uchun.
 export default function OrdersPage() {
   const queryClient = useQueryClient();
-  const [showForm, setShowForm] = useState(false);
   const { data: orders = [], isLoading } = useQuery({
     queryKey: ['active-orders'],
     queryFn: listActiveOrders,
     refetchInterval: 5000,
   });
 
-  const payMutation = useMutation({
-    mutationFn: ({ id, amount }: { id: string; amount: number }) =>
-      payOrder(id, [{ method: 'cash', amount }]),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['active-orders'] }),
-  });
+  const [payTarget, setPayTarget] = useState<ActiveOrder | null>(null);
+  const [paying, setPaying] = useState(false);
+  const [payError, setPayError] = useState<string | null>(null);
+  const [receiptStatus, setReceiptStatus] = useState<string | null>(null);
 
   const cancelMutation = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) => cancelOrder(id, reason),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['active-orders'] }),
   });
 
-  function handlePay(id: string, amount: number) {
-    if (confirm(`${amount.toLocaleString()} so'm naqd to'lov sifatida qabul qilinsinmi?`)) {
-      payMutation.mutate({ id, amount });
-    }
-  }
-
   function handleCancel(id: string) {
     const reason = prompt("Bekor qilish sababini kiriting:");
     if (reason) cancelMutation.mutate({ id, reason });
   }
 
+  async function confirmPayment(order: ActiveOrder) {
+    setPaying(true);
+    setPayError(null);
+    try {
+      await payOrder(order.id, [{ method: 'cash', amount: order.final_amount }]);
+      queryClient.invalidateQueries({ queryKey: ['active-orders'] });
+      setPayTarget(null);
+
+      const tableLabel = order.table_name ?? 'Buyurtma';
+      try {
+        const receipt = await getReceipt(order.id);
+        const printed = await tryPrintReceipt(receipt);
+        if (printed) {
+          setReceiptStatus(`${tableLabel}: chek printerga yuborildi.`);
+        } else if (order.telegram_id) {
+          await sendReceiptTelegram(order.id);
+          setReceiptStatus(`${tableLabel}: printer topilmadi, chek mijozga Telegram orqali yuborildi.`);
+        } else {
+          setReceiptStatus(`${tableLabel}: printer topilmadi va mijozning Telegram profili yo'q — chekni qo'lda taqdim eting.`);
+        }
+      } catch {
+        setReceiptStatus(`${tableLabel}: to'lov saqlandi, lekin chekni chiqarib/yuborib bo'lmadi.`);
+      }
+    } catch (err: any) {
+      setPayError(err?.response?.data?.error ?? "To'lovni saqlashda xatolik yuz berdi");
+    } finally {
+      setPaying(false);
+    }
+  }
+
   return (
     <div>
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-900">Kassa — faol buyurtmalar</h1>
-          <p className="text-sm text-slate-500">Har 5 soniyada avtomatik yangilanadi</p>
-        </div>
-        <button
-          onClick={() => setShowForm(true)}
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-        >
-          + Yangi buyurtma
-        </button>
+      <div className="mb-6">
+        <h1 className="text-xl font-semibold text-slate-900">Kassa — faol buyurtmalar</h1>
+        <p className="text-sm text-slate-500">
+          Har 5 soniyada avtomatik yangilanadi. Yangi buyurtmalar mijozlar tomonidan Telegram bot
+          orqali beriladi.
+        </p>
       </div>
+
+      {receiptStatus && (
+        <p className="mb-4 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          {receiptStatus}
+        </p>
+      )}
 
       {isLoading && <p className="text-sm text-slate-500">Yuklanmoqda...</p>}
       {!isLoading && orders.length === 0 && (
@@ -195,13 +104,19 @@ export default function OrdersPage() {
               </span>
               <span className="text-xs text-slate-400">{o.source}</span>
             </div>
-            <p className="mb-1 text-lg font-semibold text-slate-900">
+            <p className="text-sm font-medium text-slate-900">{o.table_name ?? 'Onlayn buyurtma'}</p>
+            {o.telegram_username ? (
+              <p className="mb-1 text-xs text-sky-600">@{o.telegram_username}</p>
+            ) : o.telegram_id ? (
+              <p className="mb-1 text-xs text-sky-600">Telegram ID: {o.telegram_id}</p>
+            ) : null}
+            <p className="mb-1 mt-1 text-lg font-semibold text-slate-900">
               {o.final_amount.toLocaleString()} so'm
             </p>
             <p className="mb-4 text-xs text-slate-400">ID: {o.id.slice(0, 8)}</p>
             <div className="flex gap-2">
               <button
-                onClick={() => handlePay(o.id, o.final_amount)}
+                onClick={() => setPayTarget(o)}
                 className="flex-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
               >
                 To'lash
@@ -217,7 +132,101 @@ export default function OrdersPage() {
         ))}
       </div>
 
-      {showForm && <NewOrderForm onClose={() => setShowForm(false)} />}
+      {payTarget && (
+        <PaymentConfirmModal
+          order={payTarget}
+          submitting={paying}
+          error={payError}
+          onCancel={() => {
+            setPayTarget(null);
+            setPayError(null);
+          }}
+          onConfirm={() => confirmPayment(payTarget)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Xato bilan noto'g'ri stolni to'langan deb belgilashning oldini olish uchun
+// to'lov ikki bosqichda tasdiqlanadi: avval ma'lumot ko'rsatiladi, so'ng
+// alohida "haqiqatan ham?" bosqichida yakuniy tasdiq so'raladi.
+function PaymentConfirmModal({
+  order,
+  submitting,
+  error,
+  onCancel,
+  onConfirm,
+}: {
+  order: ActiveOrder;
+  submitting: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const [step, setStep] = useState<1 | 2>(1);
+  const tableLabel = order.table_name ?? 'Onlayn buyurtma';
+
+  return (
+    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
+        {step === 1 ? (
+          <>
+            <h2 className="mb-2 text-lg font-semibold text-slate-900">To'lovni tasdiqlash</h2>
+            <p className="mb-1 text-sm text-slate-600">
+              <span className="font-medium">{tableLabel}</span> uchun{' '}
+              <span className="font-semibold text-slate-900">
+                {order.final_amount.toLocaleString()} so'm
+              </span>{' '}
+              to'landi deb belgilanadi.
+            </p>
+            {order.telegram_username && (
+              <p className="mb-3 text-xs text-slate-400">Mijoz: @{order.telegram_username}</p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={onCancel}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
+              >
+                Bekor qilish
+              </button>
+              <button
+                onClick={() => setStep(2)}
+                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+              >
+                Davom etish
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h2 className="mb-2 text-lg font-semibold text-red-600">Haqiqatan ham tasdiqlaysizmi?</h2>
+            <p className="mb-4 text-sm text-slate-600">
+              <span className="font-medium">{tableLabel}</span> —{' '}
+              <span className="font-semibold">{order.final_amount.toLocaleString()} so'm</span>.
+              Bu amalni keyin bekor qilib bo'lmaydi. To'g'ri stolni tanlaganingizga ishonch hosil
+              qiling.
+            </p>
+            {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setStep(1)}
+                disabled={submitting}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Orqaga
+              </button>
+              <button
+                onClick={onConfirm}
+                disabled={submitting}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+              >
+                {submitting ? 'Saqlanmoqda...' : "Ha, to'landi"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

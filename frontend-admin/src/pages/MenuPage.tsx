@@ -26,7 +26,12 @@ export default function MenuPage() {
     },
   });
 
-  const [productForm, setProductForm] = useState({ name: '', description: '', price: '' });
+  const [productForm, setProductForm] = useState({
+    name: '',
+    description: '',
+    price: '',
+    image_url: '',
+  });
   const productMutation = useMutation({
     mutationFn: () =>
       createProduct({
@@ -34,9 +39,10 @@ export default function MenuPage() {
         name: productForm.name,
         description: productForm.description,
         price: Number(productForm.price),
+        image_url: productForm.image_url,
       }),
     onSuccess: () => {
-      setProductForm({ name: '', description: '', price: '' });
+      setProductForm({ name: '', description: '', price: '', image_url: '' });
       queryClient.invalidateQueries({ queryKey: ['products'] });
     },
   });
@@ -121,7 +127,19 @@ export default function MenuPage() {
                 onChange={(e) => setProductForm((f) => ({ ...f, price: e.target.value }))}
                 placeholder="Narxi"
                 type="number"
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm sm:col-span-2"
+              />
+              <input
+                value={productForm.description}
+                onChange={(e) => setProductForm((f) => ({ ...f, description: e.target.value }))}
+                placeholder="Tavsif (ixtiyoriy)"
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm sm:col-span-4"
+              />
+              <input
+                value={productForm.image_url}
+                onChange={(e) => setProductForm((f) => ({ ...f, image_url: e.target.value }))}
+                placeholder="Rasm havolasi — https://... (ixtiyoriy, Telegram menyusida ko'rinadi)"
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm sm:col-span-3"
               />
               <button
                 type="submit"
@@ -142,13 +160,26 @@ export default function MenuPage() {
             {products.map((p) => (
               <div
                 key={p.id}
-                className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+                className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
               >
-                <div>
-                  <p className="text-sm font-medium text-slate-900">{p.name}</p>
-                  <p className="text-xs text-slate-400">{p.price.toLocaleString()} so'm</p>
+                <div className="flex min-w-0 items-center gap-3">
+                  {p.image_url ? (
+                    <img
+                      src={p.image_url}
+                      alt={p.name}
+                      className="h-12 w-12 shrink-0 rounded-lg object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-lg">
+                      🍽️
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-slate-900">{p.name}</p>
+                    <p className="text-xs text-slate-400">{p.price.toLocaleString()} so'm</p>
+                  </div>
                 </div>
-                <label className="flex items-center gap-2 text-xs text-slate-500">
+                <label className="flex shrink-0 items-center gap-2 text-xs text-slate-500">
                   <input
                     type="checkbox"
                     checked={p.is_available}

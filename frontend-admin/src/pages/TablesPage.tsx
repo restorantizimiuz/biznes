@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import QRCode from 'qrcode';
 import { createFloor, createTable, getTableQR, listFloors, listTables } from '../api/endpoints';
 
 const STATUS_LABEL: Record<string, string> = {
@@ -45,11 +46,26 @@ export default function TablesPage() {
   });
 
   const [qrInfo, setQrInfo] = useState<{ tableName: string; url: string } | null>(null);
+  const [qrImage, setQrImage] = useState<string | null>(null);
 
   async function handleShowQR(tableId: string, tableName: string) {
     const { url } = await getTableQR(tableId);
     setQrInfo({ tableName, url });
   }
+
+  useEffect(() => {
+    if (!qrInfo) {
+      setQrImage(null);
+      return;
+    }
+    let cancelled = false;
+    QRCode.toDataURL(qrInfo.url, { width: 260, margin: 1 }).then((dataUrl) => {
+      if (!cancelled) setQrImage(dataUrl);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [qrInfo]);
 
   function handleAddFloor(e: FormEvent) {
     e.preventDefault();
@@ -142,11 +158,33 @@ export default function TablesPage() {
             className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-lg"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="mb-2 text-lg font-semibold text-slate-900">{qrInfo.tableName}</h2>
-            <p className="mb-4 break-all text-sm text-indigo-600">{qrInfo.url}</p>
+            <h2 className="mb-3 text-lg font-semibold text-slate-900">{qrInfo.tableName}</h2>
+            <div className="mb-3 flex justify-center">
+              {qrImage ? (
+                <img
+                  src={qrImage}
+                  alt={`${qrInfo.tableName} QR kodi`}
+                  className="h-56 w-56 rounded-lg border border-slate-200"
+                />
+              ) : (
+                <div className="flex h-56 w-56 items-center justify-center rounded-lg border border-dashed border-slate-300 text-sm text-slate-400">
+                  Yuklanmoqda...
+                </div>
+              )}
+            </div>
+            <p className="mb-4 break-all text-xs text-slate-400">{qrInfo.url}</p>
+            {qrImage && (
+              <a
+                href={qrImage}
+                download={`${qrInfo.tableName}-qr.png`}
+                className="mb-2 inline-block w-full rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+              >
+                Rasmni yuklab olish
+              </a>
+            )}
             <button
               onClick={() => setQrInfo(null)}
-              className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50"
+              className="mt-2 rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50"
             >
               Yopish
             </button>

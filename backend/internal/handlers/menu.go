@@ -115,6 +115,7 @@ func (h *MenuHandler) CreateProduct(c *fiber.Ctx) error {
 // Mahsulot bazadan o'chirilmaydi, faqat is_available=false qilinadi,
 // shunda QR-menyu va online menyudan avtomatik yashiriladi.
 func (h *MenuHandler) ToggleProductAvailability(c *fiber.Ctx) error {
+	businessID := c.Locals("business_id").(string)
 	productID := c.Params("id")
 	var body struct {
 		IsAvailable bool `json:"is_available"`
@@ -123,10 +124,13 @@ func (h *MenuHandler) ToggleProductAvailability(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "Noto'g'ri so'rov"})
 	}
 
-	_, err := h.DB.Exec(context.Background(),
-		`UPDATE products SET is_available=$1 WHERE id=$2`, body.IsAvailable, productID)
+	cmd, err := h.DB.Exec(context.Background(),
+		`UPDATE products SET is_available=$1 WHERE id=$2 AND business_id=$3`, body.IsAvailable, productID, businessID)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	if cmd.RowsAffected() == 0 {
+		return c.Status(404).JSON(fiber.Map{"error": "Mahsulot topilmadi"})
 	}
 	return c.JSON(fiber.Map{"success": true})
 }

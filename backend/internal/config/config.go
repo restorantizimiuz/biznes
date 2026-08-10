@@ -9,13 +9,18 @@ import (
 
 // Config butun tizim uchun barcha muhim sozlamalarni saqlaydi
 type Config struct {
-	Port          string
-	DatabaseURL   string
-	RedisAddr     string
-	RedisPassword string
-	JWTSecret     string
-	Environment   string // "development" yoki "production"
+	Port             string
+	DatabaseURL      string
+	RedisAddr        string
+	RedisPassword    string
+	JWTSecret        string
+	Environment      string // "development" yoki "production"
+	TelegramBotToken string // WebApp initData'ni tekshirish va chek yuborish uchun
 }
+
+// defaultJWTSecret - faqat lokal ishlab chiqish uchun mo'ljallangan namunaviy kalit.
+// Productionda bu qiymat bilan qolib ketmasligi kerak.
+const defaultJWTSecret = "o-zgartiring-bu-maxfiy-kalit"
 
 // Load .env fayldan yoki muhit o'zgaruvchilaridan sozlamalarni o'qiydi
 func Load() *Config {
@@ -24,14 +29,24 @@ func Load() *Config {
 		log.Println(".env fayl topilmadi, muhit o'zgaruvchilaridan foydalanilmoqda")
 	}
 
-	return &Config{
-		Port:          getEnv("PORT", "8080"),
-		DatabaseURL:   getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/cafesystem?sslmode=disable"),
-		RedisAddr:     getEnv("REDIS_ADDR", "localhost:6379"),
-		RedisPassword: getEnv("REDIS_PASSWORD", ""),
-		JWTSecret:     getEnv("JWT_SECRET", "o-zgartiring-bu-maxfiy-kalit"),
-		Environment:   getEnv("ENVIRONMENT", "development"),
+	cfg := &Config{
+		Port:             getEnv("PORT", "8080"),
+		DatabaseURL:      getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/cafesystem?sslmode=disable"),
+		RedisAddr:        getEnv("REDIS_ADDR", "localhost:6379"),
+		RedisPassword:    getEnv("REDIS_PASSWORD", ""),
+		JWTSecret:        getEnv("JWT_SECRET", defaultJWTSecret),
+		Environment:      getEnv("ENVIRONMENT", "development"),
+		TelegramBotToken: getEnv("TELEGRAM_BOT_TOKEN", ""),
 	}
+
+	if cfg.Environment == "production" && cfg.JWTSecret == defaultJWTSecret {
+		log.Fatal("JWT_SECRET productionda standart (namunaviy) qiymatda qoldirilishi mumkin emas — uni muhit o'zgaruvchisi orqali o'zgartiring")
+	}
+	if cfg.TelegramBotToken == "" {
+		log.Println("OGOHLANTIRISH: TELEGRAM_BOT_TOKEN sozlanmagan — Telegram WebApp orqali buyurtma va chek yuborish ishlamaydi")
+	}
+
+	return cfg
 }
 
 func getEnv(key, fallback string) string {

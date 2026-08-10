@@ -32,7 +32,7 @@ VALUES
 INSERT INTO categories (id, business_id, name, sort_order)
 VALUES ('33333333-3333-3333-3333-333333333333', '11111111-1111-1111-1111-111111111111', 'Issiq taomlar', 1);
 
-INSERT INTO products (category_id, business_id, name, description, price)
+INSERT INTO products (category_id, business_id, name, description, price, image_url)
 VALUES
-  ('33333333-3333-3333-3333-333333333333', '11111111-1111-1111-1111-111111111111', 'Lag''mon', 'Qo''l lag''moni, mol go''shti bilan', 35000),
-  ('33333333-3333-3333-3333-333333333333', '11111111-1111-1111-1111-111111111111', 'Osh', 'An''anaviy o''zbek oshi', 30000);
+  ('33333333-3333-3333-3333-333333333333', '11111111-1111-1111-1111-111111111111', 'Lag''mon', 'Qo''l lag''moni, mol go''shti bilan', 35000, 'https://images.unsplash.com/photo-1585032226651-759b368d7246?w=600&q=80'),
+  ('33333333-3333-3333-3333-333333333333', '11111111-1111-1111-1111-111111111111', 'Osh', 'An''anaviy o''zbek oshi', 30000, 'https://images.unsplash.com/photo-1596797038530-2c107229654b?w=600&q=80');

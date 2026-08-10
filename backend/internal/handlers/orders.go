@@ -42,6 +42,11 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil || len(req.Items) == 0 {
 		return c.Status(400).JSON(fiber.Map{"error": "Kamida bitta mahsulot tanlanishi kerak"})
 	}
+	for _, item := range req.Items {
+		if item.Quantity <= 0 {
+			return c.Status(400).JSON(fiber.Map{"error": "Mahsulot miqdori musbat son bo'lishi kerak"})
+		}
+	}
 	if req.Source == "" {
 		req.Source = "cashier"
 	}
@@ -67,7 +72,7 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 	for _, item := range req.Items {
 		var name string
 		var price float64
-		err = tx.QueryRow(ctx, `SELECT name, price FROM products WHERE id=$1`, item.ProductID).Scan(&name, &price)
+		err = tx.QueryRow(ctx, `SELECT name, price FROM products WHERE id=$1 AND business_id=$2`, item.ProductID, businessID).Scan(&name, &price)
 		if err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "Mahsulot topilmadi"})
 		}
@@ -105,19 +110,25 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 // ActivateOrder - QR orqali "yangi" (new) statusda kelgan buyurtmani kassir tasdiqlaydi.
 // Shundan keyin buyurtma oshxona/kassa uchun rasmiy hisoblanadi.
 func (h *OrderHandler) ActivateOrder(c *fiber.Ctx) error {
+	businessID := c.Locals("business_id").(string)
 	orderID := c.Params("id")
 	ctx := context.Background()
 
-	_, err := h.DB.Exec(ctx,
-		`UPDATE orders SET status='activated', activated_at=now() WHERE id=$1 AND status='new'`, orderID)
+	cmd, err := h.DB.Exec(ctx,
+		`UPDATE orders SET status='activated', activated_at=now() WHERE id=$1 AND business_id=$2 AND status='new'`,
+		orderID, businessID)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	if cmd.RowsAffected() == 0 {
+		return c.Status(404).JSON(fiber.Map{"error": "Buyurtma topilmadi"})
 	}
 	return c.JSON(fiber.Map{"success": true})
 }
 
 // AddItem - mavjud buyurtmaga qo'shimcha mahsulot qo'shish (kassir yoki ofitsiant tomonidan)
 func (h *OrderHandler) AddItem(c *fiber.Ctx) error {
+	businessID := c.Locals("business_id").(string)
 	orderID := c.Params("id")
 	var body struct {
 		ProductID string `json:"product_id"`
@@ -128,9 +139,15 @@ func (h *OrderHandler) AddItem(c *fiber.Ctx) error {
 	}
 
 	ctx := context.Background()
+
+	var orderExists string
+	if err := h.DB.QueryRow(ctx, `SELECT id FROM orders WHERE id=$1 AND business_id=$2`, orderID, businessID).Scan(&orderExists); err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "Buyurtma topilmadi"})
+	}
+
 	var name string
 	var price float64
-	if err := h.DB.QueryRow(ctx, `SELECT name, price FROM products WHERE id=$1`, body.ProductID).Scan(&name, &price); err != nil {
+	if err := h.DB.QueryRow(ctx, `SELECT name, price FROM products WHERE id=$1 AND business_id=$2`, body.ProductID, businessID).Scan(&name, &price); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "Mahsulot topilmadi"})
 	}
 
@@ -163,6 +180,7 @@ type PayOrderRequest struct {
 // PayOrder - to'lovni yakunlash. Bir nechta to'lov turi bo'lishi mumkin
 // (masalan 20000 naqt + 50000 o'tkazma), shuning uchun ro'yxat qabul qilinadi.
 func (h *OrderHandler) PayOrder(c *fiber.Ctx) error {
+	businessID := c.Locals("business_id").(string)
 	orderID := c.Params("id")
 	userID := c.Locals("user_id").(string)
 
@@ -171,12 +189,27 @@ func (h *OrderHandler) PayOrder(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "To'lov ma'lumoti kiritilishi shart"})
 	}
 
+	var paymentTotal float64
+	for _, p := range req.Payments {
+		paymentTotal += p.Amount
+	}
+
 	ctx := context.Background()
 	tx, err := h.DB.Begin(ctx)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 	defer tx.Rollback(ctx)
+
+	var finalAmount float64
+	if err := tx.QueryRow(ctx,
+		`SELECT final_amount FROM orders WHERE id=$1 AND business_id=$2`, orderID, businessID,
+	).Scan(&finalAmount); err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "Buyurtma topilmadi"})
+	}
+	if paymentTotal < finalAmount {
+		return c.Status(400).JSON(fiber.Map{"error": "To'lov summasi buyurtma summasidan kam"})
+	}
 
 	for _, p := range req.Payments {
 		var cardType interface{}
@@ -193,7 +226,8 @@ func (h *OrderHandler) PayOrder(c *fiber.Ctx) error {
 
 	var tableID *string
 	err = tx.QueryRow(ctx,
-		`UPDATE orders SET status='paid', paid_at=now() WHERE id=$1 RETURNING table_id`, orderID,
+		`UPDATE orders SET status='paid', paid_at=now() WHERE id=$1 AND business_id=$2 RETURNING table_id`,
+		orderID, businessID,
 	).Scan(&tableID)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
@@ -214,6 +248,7 @@ func (h *OrderHandler) PayOrder(c *fiber.Ctx) error {
 
 // CancelOrder - buyurtmani bekor qilish, sababi majburiy yoziladi (shaffoflik uchun)
 func (h *OrderHandler) CancelOrder(c *fiber.Ctx) error {
+	businessID := c.Locals("business_id").(string)
 	orderID := c.Params("id")
 	userID := c.Locals("user_id").(string)
 
@@ -231,9 +266,12 @@ func (h *OrderHandler) CancelOrder(c *fiber.Ctx) error {
 	}
 	defer tx.Rollback(ctx)
 
-	_, err = tx.Exec(ctx, `UPDATE orders SET status='cancelled' WHERE id=$1`, orderID)
+	cmd, err := tx.Exec(ctx, `UPDATE orders SET status='cancelled' WHERE id=$1 AND business_id=$2`, orderID, businessID)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	if cmd.RowsAffected() == 0 {
+		return c.Status(404).JSON(fiber.Map{"error": "Buyurtma topilmadi"})
 	}
 	_, err = tx.Exec(ctx,
 		`INSERT INTO order_cancellations (order_id, reason, cancelled_by) VALUES ($1,$2,$3)`,
@@ -250,6 +288,7 @@ func (h *OrderHandler) CancelOrder(c *fiber.Ctx) error {
 
 // ApplyDiscount - kassir hisobni kamaytirib kiritishi uchun (masalan 270000 -> 250000)
 func (h *OrderHandler) ApplyDiscount(c *fiber.Ctx) error {
+	businessID := c.Locals("business_id").(string)
 	orderID := c.Params("id")
 	var body struct {
 		DiscountAmount float64 `json:"discount_amount"`
@@ -260,40 +299,61 @@ func (h *OrderHandler) ApplyDiscount(c *fiber.Ctx) error {
 	}
 
 	ctx := context.Background()
+
+	var totalAmount float64
+	if err := h.DB.QueryRow(ctx,
+		`SELECT total_amount FROM orders WHERE id=$1 AND business_id=$2`, orderID, businessID,
+	).Scan(&totalAmount); err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "Buyurtma topilmadi"})
+	}
+	if body.DiscountAmount > totalAmount {
+		return c.Status(400).JSON(fiber.Map{"error": "Chegirma summasi buyurtma summasidan katta bo'lishi mumkin emas"})
+	}
+
 	_, err := h.DB.Exec(ctx,
-		`UPDATE orders SET discount_amount=$1, discount_reason=$2, final_amount = total_amount - $1 WHERE id=$3`,
-		body.DiscountAmount, body.Reason, orderID)
+		`UPDATE orders SET discount_amount=$1, discount_reason=$2, final_amount = total_amount - $1 WHERE id=$3 AND business_id=$4`,
+		body.DiscountAmount, body.Reason, orderID, businessID)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 	return c.JSON(fiber.Map{"success": true})
 }
 
-// ListActiveOrders - kassa dashboardida ko'rinadigan hozirgi faol buyurtmalar
+// ListActiveOrders - kassa dashboardida ko'rinadigan hozirgi faol buyurtmalar.
+// Stol nomi va (agar Telegram orqali kelgan bo'lsa) mijozning telegram username/ID'si
+// ham qo'shib qaytariladi — kassir to'lov vaqtida stol va mijozni aniq bilishi uchun.
 func (h *OrderHandler) ListActiveOrders(c *fiber.Ctx) error {
 	businessID := c.Locals("business_id").(string)
-	rows, err := h.DB.Query(context.Background(),
-		`SELECT id, table_id, source, status, total_amount, final_amount, created_at
-		 FROM orders WHERE business_id=$1 AND status IN ('new','activated')
-		 ORDER BY created_at DESC`, businessID)
+	rows, err := h.DB.Query(context.Background(), `
+		SELECT o.id, o.table_id, t.name, o.source, o.status, o.total_amount, o.final_amount, o.created_at,
+		       tc.telegram_username, tc.telegram_id
+		FROM orders o
+		LEFT JOIN tables t ON t.id = o.table_id
+		LEFT JOIN telegram_customers tc ON tc.id = o.telegram_customer_id
+		WHERE o.business_id=$1 AND o.status IN ('new','activated')
+		ORDER BY o.created_at DESC`, businessID)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 	defer rows.Close()
 
 	type orderDTO struct {
-		ID          string  `json:"id"`
-		TableID     *string `json:"table_id"`
-		Source      string  `json:"source"`
-		Status      string  `json:"status"`
-		TotalAmount float64 `json:"total_amount"`
-		FinalAmount float64 `json:"final_amount"`
+		ID               string  `json:"id"`
+		TableID          *string `json:"table_id"`
+		TableName        *string `json:"table_name"`
+		Source           string  `json:"source"`
+		Status           string  `json:"status"`
+		TotalAmount      float64 `json:"total_amount"`
+		FinalAmount      float64 `json:"final_amount"`
+		TelegramUsername *string `json:"telegram_username"`
+		TelegramID       *int64  `json:"telegram_id"`
 	}
 	var orders []orderDTO
 	for rows.Next() {
 		var o orderDTO
 		var createdAt interface{}
-		rows.Scan(&o.ID, &o.TableID, &o.Source, &o.Status, &o.TotalAmount, &o.FinalAmount, &createdAt)
+		rows.Scan(&o.ID, &o.TableID, &o.TableName, &o.Source, &o.Status, &o.TotalAmount, &o.FinalAmount, &createdAt,
+			&o.TelegramUsername, &o.TelegramID)
 		orders = append(orders, o)
 	}
 	return c.JSON(orders)

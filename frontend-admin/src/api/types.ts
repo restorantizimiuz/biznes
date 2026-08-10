@@ -41,10 +41,33 @@ export interface Table {
 export interface ActiveOrder {
   id: string;
   table_id: string | null;
+  table_name: string | null;
   source: string;
   status: 'new' | 'activated' | 'paid' | 'cancelled';
   total_amount: number;
   final_amount: number;
+  telegram_username: string | null;
+  telegram_id: number | null;
+}
+
+export interface ReceiptItem {
+  name: string;
+  quantity: number;
+  unit_price: number;
+  line_total: number;
+}
+
+export interface Receipt {
+  order_id: string;
+  business_name: string;
+  table_name: string | null;
+  items: ReceiptItem[];
+  total_amount: number;
+  discount_amount: number;
+  final_amount: number;
+  payment_methods: string[];
+  paid_at: string | null;
+  telegram_username?: string | null;
 }
 
 export interface Staff {

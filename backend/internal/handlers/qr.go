@@ -20,18 +20,19 @@ func (h *QRHandler) GetMenuByTableToken(c *fiber.Ctx) error {
 	token := c.Params("table_token")
 	ctx := context.Background()
 
-	var tableID, businessID string
+	var tableID, businessID, tableName, businessName string
 	err := h.DB.QueryRow(ctx,
-		`SELECT t.id, f.business_id FROM tables t
+		`SELECT t.id, f.business_id, t.name, b.name FROM tables t
 		 JOIN floors f ON f.id = t.floor_id
+		 JOIN businesses b ON b.id = f.business_id
 		 WHERE t.qr_code_token=$1`, token,
-	).Scan(&tableID, &businessID)
+	).Scan(&tableID, &businessID, &tableName, &businessName)
 	if err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "Stol topilmadi"})
 	}
 
 	rows, err := h.DB.Query(ctx,
-		`SELECT c.id, c.name, p.id, p.name, p.description, p.price, p.image_url
+		`SELECT c.id, c.name, p.id, p.name, COALESCE(p.description, ''), p.price, COALESCE(p.image_url, '')
 		 FROM categories c
 		 JOIN products p ON p.category_id = c.id
 		 WHERE c.business_id=$1 AND c.is_active=true AND p.is_available=true
@@ -54,7 +55,9 @@ func (h *QRHandler) GetMenuByTableToken(c *fiber.Ctx) error {
 	for rows.Next() {
 		var catID, catName string
 		var p productDTO
-		rows.Scan(&catID, &catName, &p.ID, &p.Name, &p.Description, &p.Price, &p.ImageURL)
+		if err := rows.Scan(&catID, &catName, &p.ID, &p.Name, &p.Description, &p.Price, &p.ImageURL); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
 
 		if _, ok := categoriesMap[catID]; !ok {
 			categoriesMap[catID] = &fiber.Map{"id": catID, "name": catName, "products": []productDTO{}}
@@ -70,9 +73,11 @@ func (h *QRHandler) GetMenuByTableToken(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"table_id":    tableID,
-		"business_id": businessID,
-		"categories":  result,
+		"table_id":      tableID,
+		"table_name":    tableName,
+		"business_id":   businessID,
+		"business_name": businessName,
+		"categories":    result,
 	})
 }
 
@@ -123,7 +128,7 @@ func (h *QRHandler) CreateOrderFromQR(c *fiber.Ctx) error {
 	for _, item := range req.Items {
 		var name string
 		var price float64
-		if err := tx.QueryRow(ctx, `SELECT name, price FROM products WHERE id=$1 AND is_available=true`, item.ProductID).Scan(&name, &price); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT name, price FROM products WHERE id=$1 AND business_id=$2 AND is_available=true`, item.ProductID, businessID).Scan(&name, &price); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "Mahsulot mavjud emas"})
 		}
 		_, err = tx.Exec(ctx,

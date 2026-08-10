@@ -6,6 +6,7 @@ import type {
   Floor,
   LoginResponse,
   Product,
+  Receipt,
   Settings,
   Staff,
   Table,
@@ -55,12 +56,6 @@ export const getTableQR = (tableId: string) =>
 export const listActiveOrders = () =>
   apiClient.get<ActiveOrder[]>('/orders').then((r) => r.data ?? []);
 
-export const createOrder = (body: {
-  table_id: string;
-  source: string;
-  items: { product_id: string; quantity: number }[];
-}) => apiClient.post('/orders', body).then((r) => r.data);
-
 export const payOrder = (
   orderId: string,
   payments: { method: string; card_type?: string; amount: number }[],
@@ -68,6 +63,12 @@ export const payOrder = (
 
 export const cancelOrder = (orderId: string, reason: string) =>
   apiClient.post(`/orders/${orderId}/cancel`, { reason }).then((r) => r.data);
+
+export const getReceipt = (orderId: string) =>
+  apiClient.get<Receipt>(`/orders/${orderId}/receipt`).then((r) => r.data);
+
+export const sendReceiptTelegram = (orderId: string) =>
+  apiClient.post(`/orders/${orderId}/send-receipt-telegram`).then((r) => r.data);
 
 export const listStaff = () => apiClient.get<Staff[]>('/staff').then((r) => r.data ?? []);
 
