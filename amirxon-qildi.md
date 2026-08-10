@@ -588,9 +588,9 @@ ovoz bayrog'i saqlanib, `GET /settings` da to'g'ri qaytdi.
 endi to'ldirilmoqda (sinov buyurtmasi bo'yicha 3 ta yozuv: activated → paid →
 cancelled).
 
-### 5.11. Sinovda yetib bo'lmagan qism — Smart App Control
+### 5.11. Smart App Control to'sig'i va qolgan 5 qismning sinovi
 
-Sinovning oxirida Windows **Smart App Control** "evaluation" rejimidan
+Sinovning o'rtasida Windows **Smart App Control** "evaluation" rejimidan
 **"enforced"** rejimiga o'tdi (`VerifiedAndReputablePolicyState = 1`) va
 imzolanmagan yangi `.exe` fayllarni bloklay boshladi:
 
@@ -600,38 +600,93 @@ Enterprise signing level requirements
 CodeIntegrity 3118: Smart App Control Block Details
 ```
 
-Shu sababli **oxirgi tuzatishdan keyin backend qayta ishga tushirilmadi**.
-Ya'ni quyidagi qismlar `curl` bilan **uchma-uch sinalmadi**:
+**Blok imzoga emas, faylning obro'siga (reputation) bog'liq ekan.** Buni
+tekshirib ko'rildi: `go.exe` ning o'zi ham imzolanmagan
+(`Get-AuthenticodeSignature` → `NotSigned`), lekin u dunyo bo'ylab tanish
+fayl bo'lgani uchun bemalol ishlaydi. Har safar qaytadan quriladigan noyob
+`server.exe` esa Microsoft uchun hech qachon "tanish" bo'lmaydi.
 
-- super-admin API (`/platform/*`) — jumladan yuqoridagi yo'l tartibi tuzatishi,
-- limitlar (`max_tables` dan oshganda xato),
-- funksiya bayroqlari orqali 403,
-- WebSocket bildirishnomasi,
-- chek endpointlari (pre-bill, qayta chop etish, sinov cheki).
+Aylanma yo'llar tekshirildi va hech biri yaramadi: admin huquqi yo'q
+(Docker/WSL o'rnatib bo'lmaydi), `signtool` yo'q, o'zini imzolash esa SAC
+uchun foyda bermaydi (u faqat Microsoft taniydigan sertifikatlarni qabul
+qiladi). Shuning uchun qaror foydalanuvchiga qoldirildi — **u SAC'ni
+o'chirdi** (`VerifiedAndReputablePolicyState = 0`) va backend ishga tushdi.
 
-Buning o'rniga qilingani:
+Shundan keyin qolgan 5 qism to'liq sinovdan o'tkazildi:
 
-1. **Barcha yangi SQL so'rovlar `psql` orqali jonli bazada tekshirildi** —
-   `ListBusinesses`, `Stats`, `UpdateBusiness`, `SetFeature`,
-   `SetSubscription`, stol va xodim limiti so'rovlari, `FeatureEnabled`,
-   `buildReceipt`, sinov cheki. `CreateBusiness` esa tranzaksiya ichida
-   `ROLLBACK` bilan sinaldi (haqiqiy ma'lumot yaratilmadi). Hammasi
-   xatosiz ishladi.
-2. Yo'l tartibi tuzatishining to'g'riligi bilvosita tasdiqlangan: `protected`
-   guruhidan **oldin** yozilgan `/auth/login` ishlaydi, **keyin** yozilgan
-   `/platform/login` esa 401 qaytargan edi — platforma bloki endi
-   `/auth/login` bilan bir xil pozitsiyada.
-3. Rol tekshiruvining parametrli guruhda (`/reports/orders/:id`) ishlashi
-   sinovda tasdiqlangan (kassir **403** oldi), demak chek guruhidagi
-   (`/orders/:id`) `RequireFeature` ham xuddi shunday qo'llanadi.
+**1. Super-admin API va tokenlarning ajratilishi**
 
-**Keyingi seansda birinchi ish:** Smart App Control'ni Windows Security →
-"Ilova va brauzer boshqaruvi" bo'limidan o'chirib (yoki serverni imzolangan
-holda qurib), yuqoridagi 5 qismni `curl` bilan sinash.
+| So'rov | Natija |
+|---|---|
+| `POST /platform/login` (to'g'ri parol) | 200, token olindi |
+| `POST /platform/login` (xato parol) | **401** |
+| Kafe tokeni → `/platform/businesses` | **401** |
+| Platforma tokeni → `/orders` | **401** |
+| Platforma tokeni → `/platform/businesses` | 200 |
 
-> Eslatma: Smart App Control'ni faqat foydalanuvchi o'zi o'chira oladi va
-> uni qayta yoqish uchun Windows'ni qaytadan o'rnatish kerak bo'ladi —
-> shuning uchun bu qaror sizga qoldirildi.
+Yo'l tartibi tuzatishi tasdiqlandi — `/platform/login` endi ishlaydi.
+Kafelar ro'yxati obuna, stol/xodim sonlari, oxirgi faollik va funksiya
+bayroqlari bilan to'g'ri qaytdi.
+
+Yangi kafe yaratish sinaldi: biznes + `owner` hisobi + obuna bitta
+tranzaksiyada yaratildi va yangi ega **darhol tizimga kira oldi**
+(`role: owner`). Validatsiyalar ham ishladi: takroriy kafe kodi va
+6 belgidan qisqa parol rad etildi.
+
+**2. Limitlar** — `max_tables=2`, `max_waiters=1` qilib qo'yilgach:
+
+```
+1-stol: OK        2-stol: OK        3-stol: "Tarifingiz bo'yicha maksimal 2 ta stol qo'shish mumkin"
+1-ofitsiant: OK                     2-ofitsiant: "Tarifingiz bo'yicha maksimal 1 ta ofitsiant qo'shish mumkin"
+```
+
+**3. Funksiya bayroqlari**
+
+| Bayroq | O'chirilganda | Qayta yoqilganda |
+|---|---|---|
+| `qr_menu` → `POST /qr/<token>/order` | **403** "Bu funksiya sizning tarifingizda o'chirilgan" | 400 (bo'sh savat — demak tekshiruvdan o'tdi) |
+| `reports_export` → `GET /reports/export` | **403** | 200 |
+| `receipt_print` → `GET /orders/:id/receipt` | **403** | 200 |
+
+`reports/detailed` `reports_export` bayrog'iga bog'liq emasligi ham
+tasdiqlandi (bayroq o'chiq bo'lsa ham 200) — ko'rish va yuklash alohida.
+Noma'lum funksiya kaliti 400 qaytardi.
+
+**4. Chek endpointlari**
+
+- To'lanmagan buyurtma cheki **avtomatik hisob-faktura** bo'ldi
+  (`is_pre_bill=true`), so'rovda alohida ko'rsatilmasa ham.
+- To'lovdan keyin `is_pre_bill=false`, `payment_methods=['cash']`,
+  `paid_at` to'ldirilgan.
+- Hisobotdan `?pre_bill=1` bilan qayta chiqarilganda yana hisob-faktura.
+- Sozlamalardagi printer (`network`, `192.168.1.50:9100`, 48 belgi) chek
+  bilan birga `printer` maydonida yuborildi — printer-helper shuni
+  ishlatadi, ya'ni `.env` ni tahrirlash shart emas.
+- `POST /orders/:id/receipt-printed` va `GET /printer/test-receipt` ishladi.
+
+**5. WebSocket bildirishnomasi** — qo'lda yozilgan minimal WebSocket mijozi
+bilan (`/api/v1/ws/orders?token=...`):
+
+```
+Yaroqsiz token  -> HTTP/1.1 401 Unauthorized   (upgrade bo'lmadi)
+Haqiqiy token   -> HTTP/1.1 101 Switching Protocols
+
+Mijoz QR orqali buyurtma berdi  -> 🔔 event=new_order  manba=qr  stol=4  summa=30000  from_customer=true
+Kassir o'zi buyurtma kiritdi    -> 🔇 event=new_order  from_customer=false
+```
+
+Ya'ni talabning aniq sharti bajarildi: **ovoz faqat mijoz buyurtmasida
+chiqadi**, kassirning o'z amali jim o'tadi. Bu mashinada **Redis
+o'rnatilmagan** — demak bildirishnoma haqiqatan ham server ichidagi hub
+orqali, Redis'siz ishlayapti.
+
+### 5.11.1. Sinov ma'lumotlari tozalandi
+
+Sinov paytida yaratilgan 5 ta buyurtma, sinov kafesi (`sinov-kafe` — egasi,
+qavati, stollari, ofitsianti, obunasi va bayroqlari bilan birga) o'chirildi,
+band qolgan stollar bo'shatildi va demo kafening printer sozlamalari asl
+holiga qaytarildi. Bazada faqat demo ma'lumotlar va oldingi bosqichdagi
+misol buyurtma qoldi.
 
 ### 5.12. Sinov ma'lumotlari tozalandi
 
@@ -648,4 +703,25 @@ qaytarildi. Sinov buyurtmasi **ataylab o'chirilmadi** — u audit jurnali va
 | 2 | Super-admin qayerda joylashadi | Hozircha alohida port (5175). Domen tanlangach `VITE_API_URL` orqali sozlanadi |
 | 3 | Chek qog'ozi kengligi | **Hal qilindi** — 58/80 mm Sozlamalardan tanlanadi |
 | 4 | Kassir yopilgan buyurtmani tahrirlay oladimi | **Hal qilindi** — yo'q, faqat owner/admin |
-| 5 | Redis production'da bo'ladimi | **Ahamiyatsiz qilindi** — bildirishnoma Redis'siz ishlaydi, Redis faqat bir nechta server nusxasi uchun kerak |
+| 5 | Redis production'da bo'ladimi | **Ahamiyatsiz qilindi** — bildirishnoma Redis'siz ishlaydi (sinovda tasdiqlandi: Redis o'rnatilmagan holda WebSocket hodisalari yetib keldi), Redis faqat bir nechta server nusxasi uchun kerak |
+
+### 5.14. Loyihani localhostda ishga tushirish
+
+| Xizmat | Manzil | Buyruq |
+|---|---|---|
+| PostgreSQL 16 | `localhost:5432` | Windows xizmati sifatida ishlaydi |
+| Backend API | http://localhost:8080 | `cd backend && go build -o server.exe cmd/server/main.go && ./server.exe` |
+| Kassa/admin paneli | http://localhost:5173 | `cd frontend-admin && npm run dev` |
+| Telegram WebApp | http://localhost:5174 | `cd frontend-telegram && npm run dev` |
+| **Super-admin paneli** | http://localhost:5175 | `cd frontend-superadmin && npm run dev` |
+
+Kirish ma'lumotlari:
+
+| Panel | Server | Login | Parol |
+|---|---|---|---|
+| Kassa/admin | `demo-cafe` | `admin` | `demo1234` |
+| Super-admin | — | `superadmin` | `super1234` |
+
+> `go run` bu mashinada ishlamaydi (vaqtinchalik papkadagi exe bloklanadi) —
+> har doim `go build -o server.exe` qilib, so'ng `./server.exe` ishga
+> tushiriladi.
