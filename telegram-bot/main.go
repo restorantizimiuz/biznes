@@ -83,7 +83,8 @@ func main() {
 			if u.Message == nil || !strings.HasPrefix(u.Message.Text, "/start") {
 				continue
 			}
-			if err := handleStart(token, webAppURL, businessCode, u.Message.Chat.ID); err != nil {
+			if err := handleStart(token, webAppURL, businessCode, u.Message.Chat.ID,
+				parseStartTableToken(u.Message.Text)); err != nil {
 				log.Printf("Xabar yuborishda xatolik: %v", err)
 			}
 		}
@@ -131,35 +132,56 @@ func getUpdates(client *http.Client, token string, offset int64) ([]tgUpdate, er
 	return parsed.Result, nil
 }
 
-// handleStart - /start buyrug'ini qayta ishlaydi (parametrli yoki parametrsiz — farqi yo'q).
+// parseStartTableToken - "/start table_<token>" dan stol tokenini ajratadi.
 //
-// Eski oqimda (stol QR kodi to'g'ridan-to'g'ri botni "/start table_<token>" bilan ochgan
-// paytlarda) WebApp havolasiga stol tokeni ?table= sifatida qo'shilar edi. Yangi arxitekturada
-// stol endi WebApp ochilishida emas, balki foydalanuvchi "Buyurtma berish"ni bosgan paytda
-// Telegram'ning o'z QR-skaneri orqali aniqlanadi (frontend-telegram/src/App.tsx, checkout
-// bosqichi). Shuning uchun bu yerda stol tokeni butunlay e'tiborga olinmaydi — eski, hali
-// jismoniy stollarda osilgan QR-kodlar ham xatosiz ishlayveradi (shunchaki ularning
-// "table_..." qismi endi shunchaki e'tiborsiz qoldiriladi), bu — moslik (compatibility)
-// xatti-harakati: bot hech qachon eski formatdagi start'ni xato deb hisoblamaydi.
+// Stol QR kodi aynan shu ko'rinishda bo'ladi (backend: TableHandler.GetTableQRCode).
+// Oddiy "/start" yoki boshqa parametrli start bo'lsa bo'sh satr qaytadi —
+// bot hech qachon start'ni xato deb hisoblamaydi.
+func parseStartTableToken(text string) string {
+	fields := strings.Fields(text)
+	if len(fields) < 2 {
+		return ""
+	}
+	return strings.TrimPrefix(fields[1], "table_")
+}
+
+// handleStart - /start buyrug'ini qayta ishlaydi.
 //
-// WebApp havolasiga ?business=<BUSINESS_CODE> qo'shiladi — bu "qaysi stol" emas, "qaysi
-// restoran" ekanini bildiradi, shunda WebApp ochilgan zahoti (stolsiz) shu restoran menyusini
-// ko'rsata oladi (backend: GET /api/v1/menu?business_code=...).
-func handleStart(token, webAppURL, businessCode string, chatID int64) error {
+// WebApp havolasiga har doim ?business=<BUSINESS_CODE> qo'shiladi — bu "qaysi restoran"
+// ekanini bildiradi, shunda WebApp ochilgan zahoti menyuni ko'rsata oladi
+// (backend: GET /api/v1/menu?business_code=...).
+//
+// Stol QR kodi orqali kirilgan bo'lsa (/start table_<token>), havolaga ?table=<token>
+// ham qo'shiladi va WebApp **stol rejimida** ochiladi: buyurtma turi tanlovi va QR
+// skaner bosqichi ko'rsatilmaydi, yuqorida esa stolning joriy hisobi doim ko'rinib
+// turadi. Stolda o'tirgan mijozga aynan shu ikki narsa kerak — menyu va hisob.
+//
+// Stolsiz oddiy /start esa avvalgidek to'liq oqimni beradi (stolga / yetkazib berish /
+// olib ketish), stol keyinchalik checkout paytida QR skaner orqali aniqlanadi.
+func handleStart(token, webAppURL, businessCode string, chatID int64, tableToken string) error {
 	appURL := webAppURL
 	if u, err := url.Parse(webAppURL); err == nil {
 		q := u.Query()
 		q.Set("business", businessCode)
+		if tableToken != "" {
+			q.Set("table", tableToken)
+		}
 		u.RawQuery = q.Encode()
 		appURL = u.String()
 	} else {
-		log.Printf("WEBAPP_URL'ni tahlil qilib bo'lmadi (%q): %v — business parametri qo'shilmadi", webAppURL, err)
+		log.Printf("WEBAPP_URL'ni tahlil qilib bo'lmadi (%q): %v — parametrlar qo'shilmadi", webAppURL, err)
 	}
 
 	welcomeText := "Assalomu alaykum! 👋\n\n" +
 		"Bizning botga xush kelibsiz! Buyurtma berish uchun menyuni oching."
+	buttonText := "🍽️ Menyuni ochish"
+	if tableToken != "" {
+		welcomeText = "Assalomu alaykum! 👋\n\n" +
+			"Stolingiz menyusi tayyor. Buyurtma berish va hisobingizni ko'rish uchun oching."
+		buttonText = "🍽️ Menyu va hisob"
+	}
 
-	return sendMessageWithWebApp(token, chatID, welcomeText, "🍽️ Menyuni ochish", appURL)
+	return sendMessageWithWebApp(token, chatID, welcomeText, buttonText, appURL)
 }
 
 // sendMessageWithWebApp - Telegram Bot API'ning "web_app" tugma turidan foydalanadi:

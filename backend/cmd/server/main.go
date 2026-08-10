@@ -6,6 +6,7 @@ import (
 	"cafesystem/backend/internal/config"
 	"cafesystem/backend/internal/database"
 	"cafesystem/backend/internal/handlers"
+	"cafesystem/backend/internal/notify"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -46,8 +47,15 @@ func main() {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
 
-	// 6. Barcha route'larni ro'yxatdan o'tkazish
-	handlers.RegisterRoutes(app, db, rdb, cfg)
+	// Yuklangan mahsulot rasmlari (menyu va Telegram WebApp shu havolalarni ishlatadi)
+	app.Static("/uploads", cfg.UploadDir)
+
+	// 6. Bildirishnoma hub'i — kassa paneliga WebSocket orqali yangi buyurtma
+	// signalini yuboradi. Redis'siz ishlaydi (qarang: internal/notify).
+	hub := notify.NewHub()
+
+	// 7. Barcha route'larni ro'yxatdan o'tkazish
+	handlers.RegisterRoutes(app, db, rdb, hub, cfg)
 
 	// 7. Serverni ishga tushirish
 	log.Printf("Server %s portda ishga tushdi", cfg.Port)

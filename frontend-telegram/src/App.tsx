@@ -1,17 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { createTelegramOrder, getMenuByBusinessCode, getMenuByTableToken } from './api';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  createOnlineOrder,
+  createTelegramOrder,
+  getMenuByBusinessCode,
+  getMenuByTableToken,
+} from './api';
 import { getTelegramWebApp } from './telegram';
-import type { MenuResponse, Product } from './types';
+import type { ActiveOrder, MenuResponse, OrderType, Product } from './types';
 import { useCart } from './hooks/useCart';
 import { parseTableQr } from './utils/qrParser';
 import Header from './components/Header';
 import SearchBar from './components/SearchBar';
-import CategoryTabs, { type CategoryTab } from './components/CategoryTabs';
+import CategoryList from './components/CategoryList';
 import ProductCard from './components/ProductCard';
 import ProductModal from './components/ProductModal';
 import CartBar from './components/CartBar';
 import CartScreen from './components/CartScreen';
 import ConfirmedScreen from './components/ConfirmedScreen';
+import CurrentBillPanel from './components/CurrentBillPanel';
 import EmptyState from './components/EmptyState';
 import { SkeletonGrid } from './components/SkeletonCard';
 
@@ -19,27 +25,36 @@ const tg = getTelegramWebApp();
 const BOT_USERNAME = import.meta.env.VITE_BOT_USERNAME as string | undefined;
 
 type Stage = 'loading' | 'error' | 'menu' | 'confirmed';
-type View = 'browse' | 'cart';
+// Menyu ikki bosqichli: 'categories' — kategoriyalar ro'yxati,
+// 'products' — tanlangan kategoriya taomlari, 'cart' — savat/checkout.
+type View = 'categories' | 'products' | 'cart';
 type CheckoutMessage = { type: 'error' | 'info'; text: string };
 
 export default function App() {
-  // MUHIM: bu yerda stol tokeni YO'Q. Yangi arxitekturada WebApp business
-  // darajasida ochiladi (bot ?business=<business_code> yuboradi), stol esa
-  // faqat checkout bosqichida (QR skaner orqali) aniqlanadi — pastga qarang.
-  const businessCode = useMemo(
-    () => new URLSearchParams(window.location.search).get('business') ?? '',
-    [],
-  );
+  // Ilova ikki rejimda ochiladi:
+  //
+  //   1) STOL REJIMI — havolada stol tokeni bor (?table=<token>, bot
+  //      "/start table_<token>" orqali uzatadi). Mijoz stolda o'tiribdi:
+  //      unga faqat menyu va stolning joriy hisobi kerak. Buyurtma turi
+  //      tanlovi va QR skaner bosqichi umuman ko'rsatilmaydi — ular
+  //      chalg'itadi va xato buyurtmaga olib keladi.
+  //
+  //   2) ODDIY REJIM — bot /start orqali (?business=<kod>). Bunda mijoz
+  //      uyda bo'lishi mumkin, shuning uchun to'liq oqim saqlanadi:
+  //      stolga / yetkazib berish / olib ketish.
+  const params = useMemo(() => new URLSearchParams(window.location.search), []);
+  const businessCode = useMemo(() => params.get('business') ?? '', [params]);
+  const initialTableToken = useMemo(() => params.get('table') ?? '', [params]);
 
   const [stage, setStage] = useState<Stage>('loading');
-  const [view, setView] = useState<View>('browse');
+  const [view, setView] = useState<View>('categories');
   const [errorMessage, setErrorMessage] = useState('');
   const [menu, setMenu] = useState<MenuResponse | null>(null);
-  const [activeCategory, setActiveCategory] = useState<string>('');
+  const [openCategoryId, setOpenCategoryId] = useState('');
   const [activeProduct, setActiveProduct] = useState<Product | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Checkout (savat -> QR skaner -> buyurtma) holati
+  // Checkout holati
   const [scanning, setScanning] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [checkoutMessage, setCheckoutMessage] = useState<CheckoutMessage | null>(null);
@@ -48,18 +63,20 @@ export default function App() {
   const [devManualEntry, setDevManualEntry] = useState(false);
   const [devTokenInput, setDevTokenInput] = useState('');
 
-  // Tasdiqlash ekrani uchun (buyurtma muvaffaqiyatli bo'lgandan keyin to'ldiriladi)
-  const [lastOrderId, setLastOrderId] = useState('');
+  // Stol sessiyasi: token saqlanadi — keyingi buyurtmalarda QR qayta
+  // skanerlash shart emas va stol holati kuzatib turiladi. Stol rejimida
+  // token allaqachon havoladan keladi.
+  const [tableToken, setTableToken] = useState(initialTableToken);
   const [lastOrderTotal, setLastOrderTotal] = useState(0);
   const [lastTableName, setLastTableName] = useState('');
+  const [lastOrderType, setLastOrderType] = useState<OrderType>('dine_in');
+  const [activeOrder, setActiveOrder] = useState<ActiveOrder | null>(null);
 
-  const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
-  const pillRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  // Stol ma'lum bo'lgan zahoti ilova stol rejimiga o'tadi (havoladan kelgan
+  // yoki checkout paytida skanerlangan bo'lishidan qat'i nazar).
+  const tableMode = Boolean(tableToken);
 
   // Telegram WebApp'ni ishga tushirish + mavzu (light/dark) o'zgarishini kuzatish.
-  // Ranglarning o'zi CSS o'zgaruvchilari orqali avtomatik yangilanadi (index.css) —
-  // bu yerda faqat `data-tg-scheme` atributi qo'yiladi, chunki Telegram'ning
-  // tanlagan mavzusi qurilma OS sozlamasidan farq qilishi mumkin.
   useEffect(() => {
     if (!tg) return;
     tg.ready();
@@ -74,24 +91,49 @@ export default function App() {
     return () => tg.offEvent('themeChanged', applyScheme);
   }, []);
 
-  // Menyuni business_code bo'yicha yuklash — stol tokeni endi shart emas.
+  // Menyuni yuklash. Stol tokeni bo'lsa stol endpointi ishlatiladi — u menyu
+  // bilan birga stol nomini va joriy hisobni ham qaytaradi.
   useEffect(() => {
-    if (!businessCode) {
+    const load = initialTableToken
+      ? getMenuByTableToken(initialTableToken)
+      : businessCode
+        ? getMenuByBusinessCode(businessCode)
+        : null;
+
+    if (!load) {
       setErrorMessage('Restoran aniqlanmadi. Iltimos, botni /start orqali qayta oching.');
       setStage('error');
       return;
     }
-    getMenuByBusinessCode(businessCode)
+
+    load
       .then((data) => {
         setMenu(data);
-        setActiveCategory(data.categories[0]?.id ?? '');
+        setLastTableName(data.table_name ?? '');
+        setActiveOrder(data.active_order ?? null);
         setStage('menu');
       })
       .catch(() => {
         setErrorMessage("Menyuni yuklab bo'lmadi. Birozdan so'ng qayta urinib ko'ring.");
         setStage('error');
       });
-  }, [businessCode]);
+  }, [businessCode, initialTableToken]);
+
+  // Stol ma'lum bo'lgach hisob doimiy kuzatiladi — kassir taom qo'shsa yoki
+  // "tayyor" deb belgilasa, mijoz menyudan chiqmasdan ko'radi.
+  useEffect(() => {
+    if (!tableToken) return;
+    const refresh = () => {
+      getMenuByTableToken(tableToken)
+        .then((data) => {
+          setActiveOrder(data.active_order ?? null);
+          if (data.table_name) setLastTableName(data.table_name);
+        })
+        .catch(() => {});
+    };
+    const timer = setInterval(refresh, 5000);
+    return () => clearInterval(timer);
+  }, [tableToken]);
 
   const productsById = useMemo(() => {
     const map: Record<string, Product> = {};
@@ -110,61 +152,30 @@ export default function App() {
     else tg.disableClosingConfirmation?.();
   }, [cart.count]);
 
-  // Foydalanuvchi menyuni pastga aylantirganda, hozir ko'rinib turgan
-  // kategoriyaga mos pastki yorliq avtomatik yoritiladi (scroll-spy).
-  useEffect(() => {
-    if (stage !== 'menu' || view !== 'browse' || !menu || searchQuery.trim()) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            const id = entry.target.getAttribute('data-category-id');
-            if (id) setActiveCategory(id);
-          }
-        }
-      },
-      { rootMargin: '-110px 0px -70% 0px', threshold: 0 },
-    );
-    for (const cat of menu.categories) {
-      const el = sectionRefs.current[cat.id];
-      if (el) observer.observe(el);
-    }
-    return () => observer.disconnect();
-  }, [stage, view, menu, searchQuery]);
-
-  useEffect(() => {
-    pillRefs.current[activeCategory]?.scrollIntoView({
-      behavior: 'smooth',
-      inline: 'center',
-      block: 'nearest',
-    });
-  }, [activeCategory]);
-
-  // Telegram BackButton — savat ekranida va tasdiqlash ekranida "orqaga" ishorasi sifatida
+  // Telegram BackButton — ichki ekranlarda "orqaga" ishorasi sifatida
   useEffect(() => {
     const btn = tg?.BackButton;
     if (!btn) return;
-    if (view === 'cart' || stage === 'confirmed') btn.show();
+    const canGoBack = view !== 'categories' || stage === 'confirmed';
+    if (canGoBack) btn.show();
     else btn.hide();
+
     const onClick = () => {
       if (stage === 'confirmed') {
         setStage('menu');
+        setView('categories');
         return;
       }
-      setView('browse');
+      if (view === 'cart') {
+        setView(openCategoryId ? 'products' : 'categories');
+        return;
+      }
+      setView('categories');
+      setOpenCategoryId('');
     };
     btn.onClick(onClick);
     return () => btn.offClick(onClick);
-  }, [view, stage]);
-
-  function scrollToCategory(id: string) {
-    setActiveCategory(id);
-    if (id === 'all') {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
-    sectionRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
+  }, [view, stage, openCategoryId]);
 
   async function submitOrder(confirmedTableToken: string) {
     if (cart.count === 0) return;
@@ -173,44 +184,90 @@ export default function App() {
     try {
       const initData = tg?.initData ?? '';
       const items = cart.lines.map((l) => ({ product_id: l.product.id, quantity: l.quantity }));
-      const result = await createTelegramOrder(confirmedTableToken, initData, items);
+      await createTelegramOrder(confirmedTableToken, initData, items);
 
-      setLastOrderId(result.id);
+      setTableToken(confirmedTableToken);
       setLastOrderTotal(cart.total);
-      setLastTableName('');
-      // Tasdiqlash ekranida stol nomini ko'rsatish uchun best-effort so'rov — muvaffaqiyatsiz
+      setLastOrderType('dine_in');
+      // Stol nomi va joriy hisobni ko'rsatish uchun best-effort so'rov — muvaffaqiyatsiz
       // bo'lsa ham buyurtma allaqachon qabul qilingan, shuning uchun xatoni yutib yuboramiz.
       getMenuByTableToken(confirmedTableToken)
-        .then((data) => setLastTableName(data.table_name ?? ''))
+        .then((data) => {
+          setLastTableName(data.table_name ?? '');
+          setActiveOrder(data.active_order ?? null);
+        })
         .catch(() => {});
 
-      cart.clear();
-      tg?.HapticFeedback?.notificationOccurred('success');
-      tg?.disableClosingConfirmation?.();
-      setStage('confirmed');
-      setView('browse');
+      finishOrder();
     } catch (err: any) {
-      tg?.HapticFeedback?.notificationOccurred('error');
-      setCheckoutMessage({
-        type: 'error',
-        text: err?.response?.data?.error ?? 'Buyurtma yuborishda xatolik yuz berdi',
-      });
+      handleOrderError(err);
     } finally {
       setSubmitting(false);
     }
   }
 
-  // "Buyurtma berish" bosilganda Telegram'ning native QR-skaneri ochiladi — mijoz
-  // stol ustidagi QR kodni skanerlaydi, shundan keyingina qaysi stol ekanligi
-  // ma'lum bo'ladi va buyurtma shu stol uchun yuboriladi.
-  //
-  // Telegram tashqarisida (oddiy brauzerda sinashda) native skaner mavjud emas —
-  // bu holatda faqat SINOV uchun kichik inline matn maydoni ko'rsatiladi (kamera
-  // komponenti emas, oddiy input — productionda (haqiqiy Telegram'da) bu yo'l
-  // umuman ko'rinmaydi, chunki initData bo'sh bo'lmaydi).
-  function handleOrderButtonClick() {
+  async function submitOnlineOrder(orderType: 'delivery' | 'pickup', phone: string, address: string) {
+    if (cart.count === 0) return;
+    setSubmitting(true);
+    setCheckoutMessage(null);
+    try {
+      const items = cart.lines.map((l) => ({ product_id: l.product.id, quantity: l.quantity }));
+      await createOnlineOrder({
+        init_data: tg?.initData ?? '',
+        business_code: businessCode,
+        order_type: orderType,
+        phone,
+        address,
+        items,
+      });
+
+      setLastOrderTotal(cart.total);
+      setLastOrderType(orderType);
+      setLastTableName('');
+      // Stolsiz buyurtmada kuzatib turadigan stol tokeni yo'q — holat
+      // tasdiqlash ekranida statik ko'rsatiladi.
+      setActiveOrder(null);
+      finishOrder();
+    } catch (err: any) {
+      handleOrderError(err);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function finishOrder() {
+    cart.clear();
+    tg?.HapticFeedback?.notificationOccurred('success');
+    tg?.disableClosingConfirmation?.();
+    setStage('confirmed');
+    setView('categories');
+  }
+
+  function handleOrderError(err: any) {
+    tg?.HapticFeedback?.notificationOccurred('error');
+    setCheckoutMessage({
+      type: 'error',
+      text: err?.response?.data?.error ?? 'Buyurtma yuborishda xatolik yuz berdi',
+    });
+  }
+
+  // Savatdagi "Buyurtma berish" bosilganda: stolga bo'lsa QR skaner ochiladi,
+  // yetkazib berish/olib ketish bo'lsa to'g'ridan-to'g'ri yuboriladi.
+  function handleCheckout(orderType: OrderType, phone: string, address: string) {
     if (cart.count === 0) return;
     setCheckoutMessage(null);
+
+    if (orderType !== 'dine_in') {
+      submitOnlineOrder(orderType, phone, address);
+      return;
+    }
+
+    // Stol allaqachon shu sessiyada skanerlangan bo'lsa, qayta skanerlash shart emas —
+    // mijoz bir stolda o'tirib bir necha marta buyurtma qo'shishi odatiy holat.
+    if (tableToken) {
+      submitOrder(tableToken);
+      return;
+    }
 
     if (!tg?.initData || !tg.showScanQrPopup) {
       setDevManualEntry(true);
@@ -268,10 +325,7 @@ export default function App() {
     );
   }, [normalizedQuery, productsById]);
 
-  const categoryTabs: CategoryTab[] = useMemo(() => {
-    if (!menu) return [];
-    return [{ id: 'all', name: 'Barchasi' }, ...menu.categories.map((c) => ({ id: c.id, name: c.name }))];
-  }, [menu]);
+  const openCategory = menu?.categories.find((c) => c.id === openCategoryId) ?? null;
 
   if (stage === 'loading') {
     return (
@@ -296,10 +350,14 @@ export default function App() {
   if (stage === 'confirmed') {
     return (
       <ConfirmedScreen
-        orderId={lastOrderId}
-        total={lastOrderTotal}
+        order={activeOrder}
+        fallbackTotal={lastOrderTotal}
         tableName={lastTableName}
-        onOrderMore={() => setStage('menu')}
+        orderType={lastOrderType}
+        onOrderMore={() => {
+          setStage('menu');
+          setView('categories');
+        }}
       />
     );
   }
@@ -313,29 +371,45 @@ export default function App() {
           scanning={scanning}
           submitting={submitting}
           checkoutMessage={checkoutMessage}
-          onBack={() => setView('browse')}
+          lockedToTable={tableMode}
+          tableName={lastTableName}
+          onBack={() => setView(openCategoryId ? 'products' : 'categories')}
           onIncrement={cart.increment}
           onDecrement={cart.decrement}
-          onSubmit={handleOrderButtonClick}
+          onSubmit={handleCheckout}
         />
       ) : (
         <div className="pb-28">
-          <Header businessName={menu?.business_name ?? ''} />
+          {view === 'products' && openCategory ? (
+            <header
+              className="flex items-center gap-3 px-4 pb-3"
+              style={{ paddingTop: 'calc(var(--safe-top) + 12px)' }}
+            >
+              <button
+                onClick={() => {
+                  setView('categories');
+                  setOpenCategoryId('');
+                }}
+                aria-label="Orqaga"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-surface)] text-base shadow-[var(--shadow-sm)] transition active:scale-90"
+              >
+                ←
+              </button>
+              <h1 className="truncate text-[17px] font-bold text-[var(--color-text)]">
+                {openCategory.name}
+              </h1>
+            </header>
+          ) : (
+            <Header businessName={menu?.business_name ?? ''} />
+          )}
+
+          {/* Stol rejimida joriy hisob doim ko'rinib turadi — stolda o'tirgan
+              mijozga menyudan tashqari faqat shu kerak. */}
+          {tableMode && <CurrentBillPanel order={activeOrder} tableName={lastTableName || 'Stol'} />}
 
           <div className="px-4 pb-1">
             <SearchBar value={searchQuery} onChange={setSearchQuery} />
           </div>
-
-          {!normalizedQuery && categoryTabs.length > 1 && (
-            <div className="sticky top-0 z-10 bg-[var(--color-bg)]/95 backdrop-blur">
-              <CategoryTabs
-                tabs={categoryTabs}
-                activeId={activeCategory || 'all'}
-                onSelect={scrollToCategory}
-                pillRefs={pillRefs}
-              />
-            </div>
-          )}
 
           <div className="px-4 pt-3">
             {normalizedQuery ? (
@@ -355,42 +429,36 @@ export default function App() {
               ) : (
                 <EmptyState emoji="🔎" title="Hech narsa topilmadi" subtitle="Boshqa nom bilan qidiring" />
               )
-            ) : (
-              <div className="space-y-6">
-                {menu?.categories.map((cat) => (
-                  <section
-                    key={cat.id}
-                    data-category-id={cat.id}
-                    ref={(el) => {
-                      sectionRefs.current[cat.id] = el;
-                    }}
-                    className="scroll-mt-28"
-                  >
-                    <h2 className="mb-2.5 text-[15px] font-bold text-[var(--color-text)]">{cat.name}</h2>
-                    <div className="grid grid-cols-2 gap-3">
-                      {cat.products.map((p) => (
-                        <ProductCard
-                          key={p.id}
-                          product={p}
-                          quantity={cart.quantities[p.id] ?? 0}
-                          onIncrement={cart.increment}
-                          onDecrement={cart.decrement}
-                          onOpen={setActiveProduct}
-                        />
-                      ))}
-                    </div>
-                  </section>
+            ) : view === 'products' && openCategory ? (
+              <div className="grid grid-cols-2 gap-3">
+                {openCategory.products.map((p) => (
+                  <ProductCard
+                    key={p.id}
+                    product={p}
+                    quantity={cart.quantities[p.id] ?? 0}
+                    onIncrement={cart.increment}
+                    onDecrement={cart.decrement}
+                    onOpen={setActiveProduct}
+                  />
                 ))}
-                {menu?.categories.length === 0 && (
-                  <EmptyState emoji="🍽️" title="Hozircha menyu bo'sh" />
-                )}
               </div>
+            ) : menu && menu.categories.length > 0 ? (
+              <CategoryList
+                categories={menu.categories}
+                onSelect={(id) => {
+                  setOpenCategoryId(id);
+                  setView('products');
+                  window.scrollTo({ top: 0 });
+                }}
+              />
+            ) : (
+              <EmptyState emoji="🍽️" title="Hozircha menyu bo'sh" />
             )}
           </div>
         </div>
       )}
 
-      {view === 'browse' && cart.count > 0 && (
+      {view !== 'cart' && cart.count > 0 && (
         <CartBar count={cart.count} total={cart.total} onOpen={() => setView('cart')} />
       )}
 

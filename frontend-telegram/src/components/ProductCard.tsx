@@ -1,6 +1,7 @@
 import { memo, useState } from 'react';
 import type { Product } from '../types';
 import { formatMoney } from '../utils/format';
+import { resolveImageUrl } from '../api';
 import QuantityControl from './QuantityControl';
 
 // Rasm yo'q mahsulotlar uchun nomga qarab barqaror (har safar bir xil) gradient
@@ -33,7 +34,8 @@ function ProductCard({
   onOpen: (product: Product) => void;
 }) {
   const [imgFailed, setImgFailed] = useState(false);
-  const showImage = Boolean(product.image_url) && !imgFailed;
+  const imageSrc = resolveImageUrl(product.image_url);
+  const showImage = Boolean(imageSrc) && !imgFailed;
 
   return (
     <div
@@ -48,7 +50,7 @@ function ProductCard({
       <div className="relative aspect-square w-full overflow-hidden bg-[var(--color-border)]">
         {showImage ? (
           <img
-            src={product.image_url}
+            src={imageSrc}
             alt={product.name}
             loading="lazy"
             decoding="async"

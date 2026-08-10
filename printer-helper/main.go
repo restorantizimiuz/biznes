@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,23 +36,65 @@ type receiptItem struct {
 	LineTotal float64 `json:"line_total"`
 }
 
+// printerSettings - kassa panelidan kelgan sozlama.
+//
+// Ilgari printer faqat shu dasturning .env fayli orqali sozlanardi — kassir
+// uchun matn faylini tahrirlash qiyin. Endi sozlama kafe bazasida turadi va
+// chek bilan birga keladi. Kelmasa .env qiymatlari ishlatiladi, shuning uchun
+// eski o'rnatmalar buzilmaydi.
+type printerSettings struct {
+	Mode       string `json:"mode"`
+	Address    string `json:"address"`
+	PaperWidth int    `json:"paper_width"`
+}
+
 type receipt struct {
-	OrderID          string        `json:"order_id"`
-	BusinessName     string        `json:"business_name"`
-	TableName        *string       `json:"table_name"`
-	Items            []receiptItem `json:"items"`
-	TotalAmount      float64       `json:"total_amount"`
-	DiscountAmount   float64       `json:"discount_amount"`
-	FinalAmount      float64       `json:"final_amount"`
-	PaymentMethods   []string      `json:"payment_methods"`
-	PaidAt           *time.Time    `json:"paid_at"`
-	TelegramUsername *string       `json:"telegram_username"`
+	OrderID          string           `json:"order_id"`
+	BusinessName     string           `json:"business_name"`
+	TableName        *string          `json:"table_name"`
+	OrderType        string           `json:"order_type"`
+	CustomerPhone    *string          `json:"customer_phone"`
+	DeliveryAddress  *string          `json:"delivery_address"`
+	Items            []receiptItem    `json:"items"`
+	TotalAmount      float64          `json:"total_amount"`
+	DiscountAmount   float64          `json:"discount_amount"`
+	FinalAmount      float64          `json:"final_amount"`
+	PaymentMethods   []string         `json:"payment_methods"`
+	PaidAt           *time.Time       `json:"paid_at"`
+	CreatedAt        *time.Time       `json:"created_at"`
+	TelegramUsername *string          `json:"telegram_username"`
+	IsPreBill        bool             `json:"is_pre_bill"`
+	Printer          *printerSettings `json:"printer"`
 }
 
 type printerConfig struct {
 	Mode    string // "network", "file" yoki "" (o'chirilgan)
 	Address string // network rejimi uchun: "192.168.1.50:9100"
 	Device  string // file rejimi uchun: "/dev/usb/lp0"
+	// LineWidth - qog'ozga sig'adigan belgilar soni: 58mm -> 32, 80mm -> 48.
+	LineWidth int
+}
+
+// resolve - chek bilan kelgan sozlama .env qiymatlaridan ustun turadi.
+// Kassir sozlamani interfeysdan o'zgartirsa, dasturni qayta ishga tushirish
+// shart bo'lmasligi kerak.
+func (c printerConfig) resolve(s *printerSettings) printerConfig {
+	if s == nil {
+		return c
+	}
+	if s.Mode != "" {
+		c.Mode = s.Mode
+		// Manzil rejimga qarab turli maydonga tushadi, lekin interfeysda
+		// bitta katak — shuning uchun ikkalasiga ham yoziladi.
+		if s.Address != "" {
+			c.Address = s.Address
+			c.Device = s.Address
+		}
+	}
+	if s.PaperWidth >= 24 && s.PaperWidth <= 64 {
+		c.LineWidth = s.PaperWidth
+	}
+	return c
 }
 
 func main() {
@@ -60,9 +103,17 @@ func main() {
 	}
 
 	cfg := printerConfig{
-		Mode:    os.Getenv("PRINTER_MODE"),
-		Address: os.Getenv("PRINTER_ADDRESS"),
-		Device:  os.Getenv("PRINTER_DEVICE"),
+		Mode:      os.Getenv("PRINTER_MODE"),
+		Address:   os.Getenv("PRINTER_ADDRESS"),
+		Device:    os.Getenv("PRINTER_DEVICE"),
+		LineWidth: defaultLineWidth,
+	}
+	if raw := os.Getenv("PRINTER_LINE_WIDTH"); raw != "" {
+		if width, err := strconv.Atoi(raw); err == nil && width >= 24 && width <= 64 {
+			cfg.LineWidth = width
+		} else {
+			log.Printf("PRINTER_LINE_WIDTH qiymati noto'g'ri (%q) — %d ishlatiladi", raw, defaultLineWidth)
+		}
 	}
 	port := os.Getenv("HELPER_PORT")
 	if port == "" {
@@ -70,8 +121,8 @@ func main() {
 	}
 
 	if cfg.Mode == "" {
-		log.Println("OGOHLANTIRISH: PRINTER_MODE sozlanmagan — /print so'rovlari xato qaytaradi " +
-			"(kassa paneli buni ko'rib, chekni Telegram orqali yuboradi)")
+		log.Println("Eslatma: PRINTER_MODE sozlanmagan — sozlama kassa panelidagi " +
+			"\"Sozlamalar → Chek printeri\" bo'limidan ham kelishi mumkin")
 	}
 
 	mux := http.NewServeMux()
@@ -114,7 +165,9 @@ func handlePrint(w http.ResponseWriter, r *http.Request, cfg printerConfig) {
 		return
 	}
 
-	data := buildEscPos(rec)
+	// Chek bilan kelgan sozlama .env qiymatlaridan ustun turadi.
+	cfg = cfg.resolve(rec.Printer)
+	data := buildEscPos(rec, cfg.LineWidth)
 
 	if err := sendToPrinter(cfg, data); err != nil {
 		log.Printf("Chop etishda xatolik: %v", err)
@@ -164,25 +217,55 @@ const (
 	escBoldOn      = "\x1b\x45\x01" // ESC E 1
 	escBoldOff     = "\x1b\x45\x00" // ESC E 0
 	gsCut          = "\x1d\x56\x01" // GS V 1 - qog'ozni kesish (partial cut)
-	lineWidth      = 32             // 58mm qog'oz uchun taxminiy belgilar soni
+
+	// defaultLineWidth - 58mm qog'oz uchun belgilar soni.
+	// 80mm printer uchun 48 bo'ladi; qiymat sozlamadan keladi.
+	defaultLineWidth = 32
 )
 
-func buildEscPos(r receipt) []byte {
+// orderTypeLabel - stolsiz (online) buyurtmada stol nomi o'rniga turi yoziladi.
+var orderTypeLabel = map[string]string{
+	"dine_in":  "Stolga",
+	"delivery": "Yetkazib berish",
+	"pickup":   "Olib ketish",
+}
+
+func buildEscPos(r receipt, lineWidth int) []byte {
+	if lineWidth < 24 {
+		lineWidth = defaultLineWidth
+	}
+
 	var b strings.Builder
 	b.WriteString(escInit)
 	b.WriteString(escAlignCenter)
 	b.WriteString(escBoldOn)
 	b.WriteString(r.BusinessName + "\n")
+	// Hisob-faktura to'langan chek bilan adashtirilmasligi uchun aniq belgilanadi.
+	if r.IsPreBill {
+		b.WriteString("*** HISOB-FAKTURA ***\n")
+		b.WriteString("TO'LANMAGAN\n")
+	}
 	b.WriteString(escBoldOff)
+
+	b.WriteString(escAlignLeft)
 	if r.TableName != nil {
 		b.WriteString("Stol: " + *r.TableName + "\n")
+	} else if label, ok := orderTypeLabel[r.OrderType]; ok {
+		b.WriteString("Buyurtma: " + label + "\n")
 	}
-	if r.PaidAt != nil {
-		b.WriteString(r.PaidAt.Format("2006-01-02 15:04") + "\n")
+	// Stolsiz buyurtmada kuryer/kassir uchun aloqa ma'lumoti chekda bo'lishi shart.
+	if r.CustomerPhone != nil && *r.CustomerPhone != "" {
+		b.WriteString("Tel: " + *r.CustomerPhone + "\n")
+	}
+	if r.DeliveryAddress != nil && *r.DeliveryAddress != "" {
+		b.WriteString("Manzil: " + *r.DeliveryAddress + "\n")
+	}
+
+	if when := receiptTime(r); when != nil {
+		b.WriteString(when.Format("2006-01-02 15:04") + "\n")
 	}
 	b.WriteString(strings.Repeat("-", lineWidth) + "\n")
 
-	b.WriteString(escAlignLeft)
 	for _, it := range r.Items {
 		name := it.Name
 		if len(name) > lineWidth {
@@ -195,11 +278,15 @@ func buildEscPos(r receipt) []byte {
 	b.WriteString(strings.Repeat("-", lineWidth) + "\n")
 
 	if r.DiscountAmount > 0 {
-		b.WriteString(padLine("Jami:", formatMoney(r.TotalAmount)) + "\n")
-		b.WriteString(padLine("Chegirma:", "-"+formatMoney(r.DiscountAmount)) + "\n")
+		b.WriteString(padLine("Jami:", formatMoney(r.TotalAmount), lineWidth) + "\n")
+		b.WriteString(padLine("Chegirma:", "-"+formatMoney(r.DiscountAmount), lineWidth) + "\n")
 	}
 	b.WriteString(escBoldOn)
-	b.WriteString(padLine("TO'LANDI:", formatMoney(r.FinalAmount)+" so'm") + "\n")
+	totalLabel := "TO'LANDI:"
+	if r.IsPreBill {
+		totalLabel = "TO'LANADI:"
+	}
+	b.WriteString(padLine(totalLabel, formatMoney(r.FinalAmount)+" so'm", lineWidth) + "\n")
 	b.WriteString(escBoldOff)
 
 	if len(r.PaymentMethods) > 0 {
@@ -210,13 +297,25 @@ func buildEscPos(r receipt) []byte {
 	}
 
 	b.WriteString(escAlignCenter)
-	b.WriteString("\nXaridingiz uchun rahmat!\n\n\n")
+	if r.IsPreBill {
+		b.WriteString("\nTo'lov uchun kassirga murojaat qiling\n\n\n")
+	} else {
+		b.WriteString("\nXaridingiz uchun rahmat!\n\n\n")
+	}
 	b.WriteString(gsCut)
 
 	return []byte(b.String())
 }
 
-func padLine(label, value string) string {
+// receiptTime - to'langan chekda to'lov vaqti, hisob-fakturada buyurtma vaqti.
+func receiptTime(r receipt) *time.Time {
+	if r.PaidAt != nil {
+		return r.PaidAt
+	}
+	return r.CreatedAt
+}
+
+func padLine(label, value string, lineWidth int) string {
 	spaces := lineWidth - len(label) - len(value)
 	if spaces < 1 {
 		spaces = 1

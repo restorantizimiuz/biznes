@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
+
+	"cafesystem/backend/internal/middleware"
+	"cafesystem/backend/internal/notify"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,6 +15,7 @@ import (
 type QRHandler struct {
 	DB  *pgxpool.Pool
 	RDB *redis.Client
+	Hub *notify.Hub
 }
 
 type menuProductDTO struct {
@@ -30,7 +33,8 @@ func (h *QRHandler) fetchMenuCategories(ctx context.Context, businessID string) 
 		`SELECT c.id, c.name, p.id, p.name, COALESCE(p.description, ''), p.price, COALESCE(p.image_url, '')
 		 FROM categories c
 		 JOIN products p ON p.category_id = c.id
-		 WHERE c.business_id=$1 AND c.is_active=true AND p.is_available=true
+		 WHERE c.business_id=$1 AND c.is_active=true AND c.is_deleted=false
+		   AND p.is_available=true AND p.is_deleted=false
 		 ORDER BY c.sort_order`, businessID)
 	if err != nil {
 		return nil, err
@@ -62,7 +66,43 @@ func (h *QRHandler) fetchMenuCategories(ctx context.Context, businessID string) 
 	return result, nil
 }
 
-// GetMenuByTableToken - QR skaner qilinganda ochiladigan sahifa uchun menyuni qaytaradi
+// fetchTableActiveOrder - stolning hozirgi to'lanmagan buyurtmasini (bo'lsa) qaytaradi.
+// Mijoz QR/Telegram orqali kirganda shu stolda nima buyurtma qilinganini (kassir
+// kiritganlari ham) va oshxona holatini ko'rishi uchun ishlatiladi.
+func (h *QRHandler) fetchTableActiveOrder(ctx context.Context, tableID string) (fiber.Map, error) {
+	var orderID, status, kitchenStatus string
+	var totalAmount, finalAmount float64
+	err := h.DB.QueryRow(ctx,
+		`SELECT id, status, kitchen_status, total_amount, final_amount FROM orders
+		 WHERE table_id=$1 AND status IN ('new','activated')
+		 ORDER BY created_at DESC LIMIT 1`, tableID,
+	).Scan(&orderID, &status, &kitchenStatus, &totalAmount, &finalAmount)
+	if err != nil {
+		return nil, nil // faol buyurtma yo'q — bu xato emas
+	}
+
+	itemsByOrder, err := fetchOrderItems(ctx, h.DB, []string{orderID})
+	if err != nil {
+		return nil, err
+	}
+	items := itemsByOrder[orderID]
+	if items == nil {
+		items = []orderItemDTO{}
+	}
+
+	return fiber.Map{
+		"id":             orderID,
+		"status":         status,
+		"kitchen_status": kitchenStatus,
+		"items":          items,
+		"total_amount":   totalAmount,
+		"final_amount":   finalAmount,
+	}, nil
+}
+
+// GetMenuByTableToken - QR skaner qilinganda ochiladigan sahifa uchun menyuni qaytaradi.
+// Javobga stolning joriy buyurtmasi (active_order) ham qo'shiladi — mijoz o'z
+// buyurtmasi holatini (qabul qilindi / tayyorlanmoqda / tayyor) kuzatib turishi uchun.
 func (h *QRHandler) GetMenuByTableToken(c *fiber.Ctx) error {
 	token := c.Params("table_token")
 	ctx := context.Background()
@@ -72,7 +112,7 @@ func (h *QRHandler) GetMenuByTableToken(c *fiber.Ctx) error {
 		`SELECT t.id, f.business_id, t.name, b.name FROM tables t
 		 JOIN floors f ON f.id = t.floor_id
 		 JOIN businesses b ON b.id = f.business_id
-		 WHERE t.qr_code_token=$1`, token,
+		 WHERE t.qr_code_token=$1 AND t.is_deleted=false`, token,
 	).Scan(&tableID, &businessID, &tableName, &businessName)
 	if err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "Stol topilmadi"})
@@ -83,12 +123,18 @@ func (h *QRHandler) GetMenuByTableToken(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 
+	activeOrder, err := h.fetchTableActiveOrder(ctx, tableID)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
 	return c.JSON(fiber.Map{
 		"table_id":      tableID,
 		"table_name":    tableName,
 		"business_id":   businessID,
 		"business_name": businessName,
 		"categories":    result,
+		"active_order":  activeOrder,
 	})
 }
 
@@ -137,14 +183,21 @@ func (h *QRHandler) CreateOrderFromQR(c *fiber.Ctx) error {
 	token := c.Params("table_token")
 	ctx := context.Background()
 
-	var tableID, businessID string
+	var tableID, businessID, tableName string
 	err := h.DB.QueryRow(ctx,
-		`SELECT t.id, f.business_id FROM tables t
+		`SELECT t.id, f.business_id, t.name FROM tables t
 		 JOIN floors f ON f.id = t.floor_id
-		 WHERE t.qr_code_token=$1`, token,
-	).Scan(&tableID, &businessID)
+		 WHERE t.qr_code_token=$1 AND t.is_deleted=false`, token,
+	).Scan(&tableID, &businessID, &tableName)
 	if err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "Stol topilmadi"})
+	}
+
+	// QR menyu funksiyasi super-admin tomonidan o'chirilgan bo'lishi mumkin.
+	// Tekshiruv aynan shu yerda: bu endpoint ochiq (JWT yo'q), shuning uchun
+	// middleware emas, to'g'ridan-to'g'ri chaqiruv ishlatiladi.
+	if !middleware.FeatureEnabled(ctx, h.DB, businessID, middleware.FeatureQRMenu) {
+		return c.Status(403).JSON(fiber.Map{"error": middleware.ErrFeatureDisabled.Error()})
 	}
 
 	var req qrOrderRequest
@@ -171,7 +224,10 @@ func (h *QRHandler) CreateOrderFromQR(c *fiber.Ctx) error {
 	for _, item := range req.Items {
 		var name string
 		var price float64
-		if err := tx.QueryRow(ctx, `SELECT name, price FROM products WHERE id=$1 AND business_id=$2 AND is_available=true`, item.ProductID, businessID).Scan(&name, &price); err != nil {
+		if err := tx.QueryRow(ctx,
+			`SELECT name, price FROM products
+			 WHERE id=$1 AND business_id=$2 AND is_available=true AND is_deleted=false`,
+			item.ProductID, businessID).Scan(&name, &price); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "Mahsulot mavjud emas"})
 		}
 		_, err = tx.Exec(ctx,
@@ -196,10 +252,26 @@ func (h *QRHandler) CreateOrderFromQR(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// Kassa paneliga real-time bildirishnoma
-	channel := "orders:" + businessID
-	payload, _ := json.Marshal(fiber.Map{"event": "new_order", "order_id": orderID, "table_id": tableID})
-	h.RDB.Publish(ctx, channel, payload)
+	writeAudit(ctx, h.DB, auditEntry{
+		BusinessID: businessID,
+		ActorLabel: "QR mijoz",
+		OrderID:    orderID,
+		Action:     AuditOrderCreated,
+		Details:    map[string]any{"amount": total, "source": "qr", "table": tableName},
+	})
+
+	// Kassa paneliga real-time bildirishnoma. FromCustomer=true — kassa
+	// panelida ovoz va banner aynan shunday buyurtmalar uchun chiqadi.
+	publishOrderEvent(h.Hub, h.RDB, businessID, notify.Event{
+		Event:        "new_order",
+		OrderID:      orderID,
+		TableID:      tableID,
+		TableName:    tableName,
+		Source:       "qr",
+		OrderType:    "dine_in",
+		Amount:       total,
+		FromCustomer: true,
+	})
 
 	return c.Status(201).JSON(fiber.Map{"id": orderID, "total_amount": total})
 }
