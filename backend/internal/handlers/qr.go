@@ -15,6 +15,53 @@ type QRHandler struct {
 	RDB *redis.Client
 }
 
+type menuProductDTO struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+	Price       float64 `json:"price"`
+	ImageURL    string  `json:"image_url"`
+}
+
+// fetchMenuCategories - berilgan biznes uchun faol kategoriya/mahsulotlarni oladi.
+// Ham stol-tokeni orqali, ham biznes-kodi orqali menyu olishda ishlatiladi (kod takrorlanmasin deb).
+func (h *QRHandler) fetchMenuCategories(ctx context.Context, businessID string) ([]fiber.Map, error) {
+	rows, err := h.DB.Query(ctx,
+		`SELECT c.id, c.name, p.id, p.name, COALESCE(p.description, ''), p.price, COALESCE(p.image_url, '')
+		 FROM categories c
+		 JOIN products p ON p.category_id = c.id
+		 WHERE c.business_id=$1 AND c.is_active=true AND p.is_available=true
+		 ORDER BY c.sort_order`, businessID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	categoriesMap := map[string]*fiber.Map{}
+	var order []string
+
+	for rows.Next() {
+		var catID, catName string
+		var p menuProductDTO
+		if err := rows.Scan(&catID, &catName, &p.ID, &p.Name, &p.Description, &p.Price, &p.ImageURL); err != nil {
+			return nil, err
+		}
+
+		if _, ok := categoriesMap[catID]; !ok {
+			categoriesMap[catID] = &fiber.Map{"id": catID, "name": catName, "products": []menuProductDTO{}}
+			order = append(order, catID)
+		}
+		items := (*categoriesMap[catID])["products"].([]menuProductDTO)
+		(*categoriesMap[catID])["products"] = append(items, p)
+	}
+
+	var result []fiber.Map
+	for _, id := range order {
+		result = append(result, *categoriesMap[id])
+	}
+	return result, nil
+}
+
 // GetMenuByTableToken - QR skaner qilinganda ochiladigan sahifa uchun menyuni qaytaradi
 func (h *QRHandler) GetMenuByTableToken(c *fiber.Ctx) error {
 	token := c.Params("table_token")
@@ -31,50 +78,46 @@ func (h *QRHandler) GetMenuByTableToken(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{"error": "Stol topilmadi"})
 	}
 
-	rows, err := h.DB.Query(ctx,
-		`SELECT c.id, c.name, p.id, p.name, COALESCE(p.description, ''), p.price, COALESCE(p.image_url, '')
-		 FROM categories c
-		 JOIN products p ON p.category_id = c.id
-		 WHERE c.business_id=$1 AND c.is_active=true AND p.is_available=true
-		 ORDER BY c.sort_order`, businessID)
+	result, err := h.fetchMenuCategories(ctx, businessID)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-	}
-	defer rows.Close()
-
-	type productDTO struct {
-		ID          string  `json:"id"`
-		Name        string  `json:"name"`
-		Description string  `json:"description"`
-		Price       float64 `json:"price"`
-		ImageURL    string  `json:"image_url"`
-	}
-	categoriesMap := map[string]*fiber.Map{}
-	var order []string
-
-	for rows.Next() {
-		var catID, catName string
-		var p productDTO
-		if err := rows.Scan(&catID, &catName, &p.ID, &p.Name, &p.Description, &p.Price, &p.ImageURL); err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-		}
-
-		if _, ok := categoriesMap[catID]; !ok {
-			categoriesMap[catID] = &fiber.Map{"id": catID, "name": catName, "products": []productDTO{}}
-			order = append(order, catID)
-		}
-		items := (*categoriesMap[catID])["products"].([]productDTO)
-		(*categoriesMap[catID])["products"] = append(items, p)
-	}
-
-	var result []fiber.Map
-	for _, id := range order {
-		result = append(result, *categoriesMap[id])
 	}
 
 	return c.JSON(fiber.Map{
 		"table_id":      tableID,
 		"table_name":    tableName,
+		"business_id":   businessID,
+		"business_name": businessName,
+		"categories":    result,
+	})
+}
+
+// GetMenuByBusinessCode - Telegram bot /start orqali (hali stol tanlanmagan holatda) ochiladigan
+// menyuni qaytaradi. business_code — businesses jadvalidagi mavjud, login'da ham ishlatiladigan
+// ustun; bu yerda faqat menyuni ko'rsatish uchun ochiq (auth talab qilinmaydi) ishlatiladi.
+// Buyurtma yaratishda baribir table_token talab qilinadi (TelegramHandler.CreateOrder) —
+// bu endpoint faqat ko'rish/browsing bosqichi uchun.
+func (h *QRHandler) GetMenuByBusinessCode(c *fiber.Ctx) error {
+	businessCode := c.Query("business_code")
+	if businessCode == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "business_code kiritilishi shart"})
+	}
+	ctx := context.Background()
+
+	var businessID, businessName string
+	err := h.DB.QueryRow(ctx,
+		`SELECT id, name FROM businesses WHERE business_code=$1 AND is_active=true`, businessCode,
+	).Scan(&businessID, &businessName)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "Restoran topilmadi"})
+	}
+
+	result, err := h.fetchMenuCategories(ctx, businessID)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{
 		"business_id":   businessID,
 		"business_name": businessName,
 		"categories":    result,

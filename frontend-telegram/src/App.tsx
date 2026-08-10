@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createTelegramOrder, getMenuByTableToken } from './api';
+import { createTelegramOrder, getMenuByBusinessCode, getMenuByTableToken } from './api';
 import { getTelegramWebApp } from './telegram';
 import type { MenuResponse, Product } from './types';
 import { useCart } from './hooks/useCart';
+import { parseTableQr } from './utils/qrParser';
 import Header from './components/Header';
 import SearchBar from './components/SearchBar';
 import CategoryTabs, { type CategoryTab } from './components/CategoryTabs';
@@ -15,24 +16,18 @@ import EmptyState from './components/EmptyState';
 import { SkeletonGrid } from './components/SkeletonCard';
 
 const tg = getTelegramWebApp();
-
-// Stol QR kodi to'liq Telegram deep-link (".../start=table_<token>") sifatida
-// kodlangan, shuning uchun skaner natijasidan tokenni ajratib olamiz. Agar kimdir
-// faqat tokenning o'zini skanerlagan bo'lsa (masalan sinov uchun), buni ham qabul qilamiz.
-function parseTableToken(scannedText: string): string | null {
-  const match = scannedText.match(/table_([0-9a-fA-F-]{8,})/);
-  if (match) return match[1];
-  const trimmed = scannedText.trim();
-  if (/^[0-9a-fA-F-]{8,}$/.test(trimmed)) return trimmed;
-  return null;
-}
+const BOT_USERNAME = import.meta.env.VITE_BOT_USERNAME as string | undefined;
 
 type Stage = 'loading' | 'error' | 'menu' | 'confirmed';
 type View = 'browse' | 'cart';
+type CheckoutMessage = { type: 'error' | 'info'; text: string };
 
 export default function App() {
-  const tableToken = useMemo(
-    () => new URLSearchParams(window.location.search).get('table') ?? '',
+  // MUHIM: bu yerda stol tokeni YO'Q. Yangi arxitekturada WebApp business
+  // darajasida ochiladi (bot ?business=<business_code> yuboradi), stol esa
+  // faqat checkout bosqichida (QR skaner orqali) aniqlanadi — pastga qarang.
+  const businessCode = useMemo(
+    () => new URLSearchParams(window.location.search).get('business') ?? '',
     [],
   );
 
@@ -43,8 +38,20 @@ export default function App() {
   const [activeCategory, setActiveCategory] = useState<string>('');
   const [activeProduct, setActiveProduct] = useState<Product | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Checkout (savat -> QR skaner -> buyurtma) holati
+  const [scanning, setScanning] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [checkoutMessage, setCheckoutMessage] = useState<CheckoutMessage | null>(null);
+  // Telegram tashqarisida (native skaner mavjud bo'lmaganda) faqat SINOV uchun —
+  // productionda (haqiqiy Telegram'da) hech qachon ko'rinmaydi.
+  const [devManualEntry, setDevManualEntry] = useState(false);
+  const [devTokenInput, setDevTokenInput] = useState('');
+
+  // Tasdiqlash ekrani uchun (buyurtma muvaffaqiyatli bo'lgandan keyin to'ldiriladi)
+  const [lastOrderId, setLastOrderId] = useState('');
   const [lastOrderTotal, setLastOrderTotal] = useState(0);
+  const [lastTableName, setLastTableName] = useState('');
 
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
   const pillRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -67,15 +74,14 @@ export default function App() {
     return () => tg.offEvent('themeChanged', applyScheme);
   }, []);
 
+  // Menyuni business_code bo'yicha yuklash — stol tokeni endi shart emas.
   useEffect(() => {
-    if (!tableToken) {
-      setErrorMessage(
-        'Stol topilmadi. Iltimos, stolingizdagi QR kodni qayta skanerlab, botni shu orqali oching.',
-      );
+    if (!businessCode) {
+      setErrorMessage('Restoran aniqlanmadi. Iltimos, botni /start orqali qayta oching.');
       setStage('error');
       return;
     }
-    getMenuByTableToken(tableToken)
+    getMenuByBusinessCode(businessCode)
       .then((data) => {
         setMenu(data);
         setActiveCategory(data.categories[0]?.id ?? '');
@@ -85,7 +91,7 @@ export default function App() {
         setErrorMessage("Menyuni yuklab bo'lmadi. Birozdan so'ng qayta urinib ko'ring.");
         setStage('error');
       });
-  }, [tableToken]);
+  }, [businessCode]);
 
   const productsById = useMemo(() => {
     const map: Record<string, Product> = {};
@@ -96,6 +102,13 @@ export default function App() {
   }, [menu]);
 
   const cart = useCart(productsById);
+
+  // Savatda mahsulot bor paytda Mini App'ni tasodifan yopib qo'yishdan himoya
+  useEffect(() => {
+    if (!tg) return;
+    if (cart.count > 0) tg.enableClosingConfirmation?.();
+    else tg.disableClosingConfirmation?.();
+  }, [cart.count]);
 
   // Foydalanuvchi menyuni pastga aylantirganda, hozir ko'rinib turgan
   // kategoriyaga mos pastki yorliq avtomatik yoritiladi (scroll-spy).
@@ -127,16 +140,22 @@ export default function App() {
     });
   }, [activeCategory]);
 
-  // Telegram BackButton — savat ekranida "orqaga" ishorasi sifatida
+  // Telegram BackButton — savat ekranida va tasdiqlash ekranida "orqaga" ishorasi sifatida
   useEffect(() => {
     const btn = tg?.BackButton;
     if (!btn) return;
-    if (view === 'cart') btn.show();
+    if (view === 'cart' || stage === 'confirmed') btn.show();
     else btn.hide();
-    const onClick = () => setView('browse');
+    const onClick = () => {
+      if (stage === 'confirmed') {
+        setStage('menu');
+        return;
+      }
+      setView('browse');
+    };
     btn.onClick(onClick);
     return () => btn.offClick(onClick);
-  }, [view]);
+  }, [view, stage]);
 
   function scrollToCategory(id: string) {
     setActiveCategory(id);
@@ -150,45 +169,85 @@ export default function App() {
   async function submitOrder(confirmedTableToken: string) {
     if (cart.count === 0) return;
     setSubmitting(true);
-    setErrorMessage('');
+    setCheckoutMessage(null);
     try {
       const initData = tg?.initData ?? '';
       const items = cart.lines.map((l) => ({ product_id: l.product.id, quantity: l.quantity }));
-      await createTelegramOrder(confirmedTableToken, initData, items);
+      const result = await createTelegramOrder(confirmedTableToken, initData, items);
+
+      setLastOrderId(result.id);
       setLastOrderTotal(cart.total);
+      setLastTableName('');
+      // Tasdiqlash ekranida stol nomini ko'rsatish uchun best-effort so'rov — muvaffaqiyatsiz
+      // bo'lsa ham buyurtma allaqachon qabul qilingan, shuning uchun xatoni yutib yuboramiz.
+      getMenuByTableToken(confirmedTableToken)
+        .then((data) => setLastTableName(data.table_name ?? ''))
+        .catch(() => {});
+
       cart.clear();
       tg?.HapticFeedback?.notificationOccurred('success');
+      tg?.disableClosingConfirmation?.();
       setStage('confirmed');
       setView('browse');
     } catch (err: any) {
       tg?.HapticFeedback?.notificationOccurred('error');
-      setErrorMessage(err?.response?.data?.error ?? 'Buyurtma yuborishda xatolik yuz berdi');
+      setCheckoutMessage({
+        type: 'error',
+        text: err?.response?.data?.error ?? 'Buyurtma yuborishda xatolik yuz berdi',
+      });
     } finally {
       setSubmitting(false);
     }
   }
 
-  // "Buyurtma berish" bosilganda avval stol QR kodini skanerlashni so'raymiz —
-  // shu orqali mijoz haqiqatan ham stol yonida ekanligi tasdiqlanadi. Telegram
-  // tashqarisida (oddiy brauzerda sinashda) skaner mavjud emas, shu holatda
-  // to'g'ridan-to'g'ri havoladagi stol tokeni bilan yuboriladi.
+  // "Buyurtma berish" bosilganda Telegram'ning native QR-skaneri ochiladi — mijoz
+  // stol ustidagi QR kodni skanerlaydi, shundan keyingina qaysi stol ekanligi
+  // ma'lum bo'ladi va buyurtma shu stol uchun yuboriladi.
+  //
+  // Telegram tashqarisida (oddiy brauzerda sinashda) native skaner mavjud emas —
+  // bu holatda faqat SINOV uchun kichik inline matn maydoni ko'rsatiladi (kamera
+  // komponenti emas, oddiy input — productionda (haqiqiy Telegram'da) bu yo'l
+  // umuman ko'rinmaydi, chunki initData bo'sh bo'lmaydi).
   function handleOrderButtonClick() {
     if (cart.count === 0) return;
+    setCheckoutMessage(null);
+
     if (!tg?.initData || !tg.showScanQrPopup) {
-      submitOrder(tableToken);
+      setDevManualEntry(true);
       return;
     }
-    setErrorMessage('');
+
+    setScanning(true);
+
+    const handlePopupClosed = () => {
+      tg.offEvent('scanQrPopupClosed', handlePopupClosed);
+      setScanning(false);
+      setCheckoutMessage({
+        type: 'info',
+        text: "Skanerlash bekor qilindi. Buyurtma berish uchun qayta urinib ko'ring.",
+      });
+    };
+    tg.onEvent('scanQrPopupClosed', handlePopupClosed);
+
     tg.showScanQrPopup(
       { text: 'Buyurtmani tasdiqlash uchun stolingizdagi QR kodni skanerlang' },
       (scannedText) => {
-        const scannedToken = parseTableToken(scannedText);
-        if (!scannedToken) {
-          setErrorMessage('Bu stol QR kodi emas. Iltimos, aynan stolingizdagi QR kodni skanerlang.');
-          return false;
+        const parsed = parseTableQr(scannedText, BOT_USERNAME);
+        if (!parsed.ok) {
+          setCheckoutMessage({
+            type: 'error',
+            text:
+              parsed.reason === 'wrong_bot'
+                ? 'Bu QR kod boshqa restoranga tegishli. Iltimos, aynan shu restoran stolidagi QR kodni skanerlang.'
+                : 'Bu QR kod restoran stoliga tegishli emas. Iltimos, stolingizdagi QR kodni skanerlang.',
+          });
+          return false; // popup ochiq qoladi — mijoz qayta skanerlashi mumkin
         }
+
+        tg.offEvent('scanQrPopupClosed', handlePopupClosed);
         tg.closeScanQrPopup?.();
-        submitOrder(scannedToken);
+        setScanning(false);
+        submitOrder(parsed.tableToken);
         return true;
       },
     );
@@ -235,18 +294,25 @@ export default function App() {
   }
 
   if (stage === 'confirmed') {
-    return <ConfirmedScreen total={lastOrderTotal} onOrderMore={() => setStage('menu')} />;
+    return (
+      <ConfirmedScreen
+        orderId={lastOrderId}
+        total={lastOrderTotal}
+        tableName={lastTableName}
+        onOrderMore={() => setStage('menu')}
+      />
+    );
   }
 
   return (
     <div className="mx-auto min-h-screen max-w-[560px] bg-[var(--color-bg)]">
       {view === 'cart' ? (
         <CartScreen
-          tableName={menu?.table_name ?? ''}
           lines={cart.lines}
           total={cart.total}
+          scanning={scanning}
           submitting={submitting}
-          errorMessage={errorMessage}
+          checkoutMessage={checkoutMessage}
           onBack={() => setView('browse')}
           onIncrement={cart.increment}
           onDecrement={cart.decrement}
@@ -254,7 +320,7 @@ export default function App() {
         />
       ) : (
         <div className="pb-28">
-          <Header businessName={menu?.business_name ?? ''} tableName={menu?.table_name ?? ''} />
+          <Header businessName={menu?.business_name ?? ''} />
 
           <div className="px-4 pb-1">
             <SearchBar value={searchQuery} onChange={setSearchQuery} />
@@ -335,6 +401,50 @@ export default function App() {
           onClose={() => setActiveProduct(null)}
           onCommit={handleCommitProduct}
         />
+      )}
+
+      {/* Faqat Telegram tashqarisida (sinov uchun) — native QR-skaner o'rniga */}
+      {devManualEntry && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-xs rounded-[var(--radius-md)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-lg)]">
+            <p className="mb-1 text-[13px] font-semibold text-[var(--color-text)]">
+              (Test) Stol tokeni
+            </p>
+            <p className="mb-3 text-[12px] text-[var(--color-text-secondary)]">
+              Telegram tashqarisida native QR-skaner mavjud emas — bu faqat sinov uchun.
+            </p>
+            <input
+              type="text"
+              autoFocus
+              value={devTokenInput}
+              onChange={(e) => setDevTokenInput(e.target.value)}
+              placeholder="table token..."
+              className="mb-3 w-full rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-[14px] text-[var(--color-text)] outline-none"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setDevManualEntry(false);
+                  setDevTokenInput('');
+                }}
+                className="flex-1 rounded-full border border-[var(--color-border)] py-2 text-[13px] text-[var(--color-text-secondary)]"
+              >
+                Bekor qilish
+              </button>
+              <button
+                onClick={() => {
+                  const value = devTokenInput.trim();
+                  setDevManualEntry(false);
+                  setDevTokenInput('');
+                  if (value) submitOrder(value);
+                }}
+                className="flex-1 rounded-full bg-[var(--color-accent)] py-2 text-[13px] font-semibold text-[var(--color-accent-text)]"
+              >
+                Yuborish
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

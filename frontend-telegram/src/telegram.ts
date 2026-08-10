@@ -43,6 +43,10 @@ interface TelegramWebApp {
     selectionChanged: () => void;
   };
   close: () => void;
+  // Savatda mahsulot bor paytda foydalanuvchi Mini App'ni tasodifan yopib qo'yishining
+  // oldini olish uchun — Telegram yopishdan oldin tasdiqlash so'raydi.
+  enableClosingConfirmation?: () => void;
+  disableClosingConfirmation?: () => void;
   // Telegram'ning o'zi taqdim etadigan native QR-skaner popup'i (Bot API 6.4+).
   // Callback `true` qaytarsa popup avtomatik yopiladi, `false`/undefined qaytarsa
   // ochiq qoladi (masalan noto'g'ri QR skanerlansa, qayta urinish uchun).

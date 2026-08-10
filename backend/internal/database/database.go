@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"log"
 
 	"cafesystem/backend/internal/config"
 
@@ -35,8 +36,18 @@ func NewPostgres(cfg *config.Config) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// NewRedis Redis clientini yaratadi (cache va real-time bildirishnomalar uchun)
+// NewRedis Redis clientini yaratadi (cache va real-time bildirishnomalar uchun).
+// REDIS_URL sozlangan bo'lsa (masalan Railway/Render kabi hosting'lar shu ko'rinishda
+// beradi: redis://default:parol@host:port) shu ishlatiladi; aks holda REDIS_ADDR +
+// REDIS_PASSWORD (lokal ishlab chiqish uchun qulayroq) ishlatiladi.
 func NewRedis(cfg *config.Config) *redis.Client {
+	if cfg.RedisURL != "" {
+		opts, err := redis.ParseURL(cfg.RedisURL)
+		if err == nil {
+			return redis.NewClient(opts)
+		}
+		log.Printf("REDIS_URL'ni o'qishda xatolik, REDIS_ADDR'ga qaytilmoqda: %v", err)
+	}
 	return redis.NewClient(&redis.Options{
 		Addr:     cfg.RedisAddr,
 		Password: cfg.RedisPassword,

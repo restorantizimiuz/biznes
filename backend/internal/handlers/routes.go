@@ -24,6 +24,9 @@ func RegisterRoutes(app *fiber.App, db *pgxpool.Pool, rdb *redis.Client, cfg *co
 	api.Get("/qr/:table_token/menu", qr.GetMenuByTableToken)
 	api.Post("/qr/:table_token/order", qr.CreateOrderFromQR)
 
+	// Telegram bot /start orqali (hali stol tanlanmagan holatda) menyuni ko'rsatish uchun ochiq endpoint
+	api.Get("/menu", qr.GetMenuByBusinessCode)
+
 	// Telegram WebApp orqali stoldan buyurtma (mijoz Telegram initData bilan autentifikatsiya qilinadi,
 	// login shart emas). Menyuni olish uchun yuqoridagi /qr/:table_token/menu qayta ishlatiladi.
 	telegram := &TelegramHandler{DB: db, RDB: rdb, Cfg: cfg}
