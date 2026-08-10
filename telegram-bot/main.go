@@ -58,6 +58,10 @@ func main() {
 	if webAppURL == "" {
 		log.Fatal("WEBAPP_URL muhit o'zgaruvchisi kiritilishi shart (Telegram WebApp faqat HTTPS manzilda ishlaydi)")
 	}
+	businessCode := os.Getenv("BUSINESS_CODE")
+	if businessCode == "" {
+		log.Fatal("BUSINESS_CODE muhit o'zgaruvchisi kiritilishi shart (backend'dagi businesses.business_code bilan bir xil bo'lishi kerak)")
+	}
 
 	username, err := getMe(token)
 	if err != nil {
@@ -79,7 +83,7 @@ func main() {
 			if u.Message == nil || !strings.HasPrefix(u.Message.Text, "/start") {
 				continue
 			}
-			if err := handleStart(token, webAppURL, u.Message.Chat.ID, u.Message.Text); err != nil {
+			if err := handleStart(token, webAppURL, businessCode, u.Message.Chat.ID); err != nil {
 				log.Printf("Xabar yuborishda xatolik: %v", err)
 			}
 		}
@@ -127,45 +131,35 @@ func getUpdates(client *http.Client, token string, offset int64) ([]tgUpdate, er
 	return parsed.Result, nil
 }
 
-// handleStart - /start buyrug'ini qayta ishlaydi. Mijoz stol QR kodi orqali kelgan bo'lsa
-// (t.me/BotName?start=table_<token>, buni backend'dagi GetTableQRCode generatsiya qiladi),
-// WebApp havolasiga shu stol tokeni ?table= parametri sifatida qo'shiladi — shunda menyu
-// to'g'ridan-to'g'ri o'sha stolga bog'langan holda ochiladi.
-func handleStart(token, webAppURL string, chatID int64, text string) error {
-	arg := strings.TrimSpace(strings.TrimPrefix(text, "/start"))
-	var tableToken string
-	if strings.HasPrefix(arg, "table_") {
-		tableToken = strings.TrimPrefix(arg, "table_")
-	}
-
-	if tableToken != "" {
-		appURL := webAppURL
-		if u, err := url.Parse(webAppURL); err == nil {
-			q := u.Query()
-			q.Set("table", tableToken)
-			u.RawQuery = q.Encode()
-			appURL = u.String()
-		}
-
-		welcomeText := "Assalomu alaykum! 👋\n\n" +
-			"Xush kelibsiz! Stolingizga xos menyuni pastdagi tugma orqali oching va " +
-			"o'zingizga yoqqan taomlarni tanlab, to'g'ridan-to'g'ri shu yerdan buyurtma bering. 🍽️\n\n" +
-			"Buyurtmangiz darhol kassa va oshxonaga yetib boradi — hech qayerga borishingiz shart emas!"
-
-		return sendMessageWithWebApp(token, chatID, welcomeText, "🍽️ Menyuni ochish", appURL)
+// handleStart - /start buyrug'ini qayta ishlaydi (parametrli yoki parametrsiz — farqi yo'q).
+//
+// Eski oqimda (stol QR kodi to'g'ridan-to'g'ri botni "/start table_<token>" bilan ochgan
+// paytlarda) WebApp havolasiga stol tokeni ?table= sifatida qo'shilar edi. Yangi arxitekturada
+// stol endi WebApp ochilishida emas, balki foydalanuvchi "Buyurtma berish"ni bosgan paytda
+// Telegram'ning o'z QR-skaneri orqali aniqlanadi (frontend-telegram/src/App.tsx, checkout
+// bosqichi). Shuning uchun bu yerda stol tokeni butunlay e'tiborga olinmaydi — eski, hali
+// jismoniy stollarda osilgan QR-kodlar ham xatosiz ishlayveradi (shunchaki ularning
+// "table_..." qismi endi shunchaki e'tiborsiz qoldiriladi), bu — moslik (compatibility)
+// xatti-harakati: bot hech qachon eski formatdagi start'ni xato deb hisoblamaydi.
+//
+// WebApp havolasiga ?business=<BUSINESS_CODE> qo'shiladi — bu "qaysi stol" emas, "qaysi
+// restoran" ekanini bildiradi, shunda WebApp ochilgan zahoti (stolsiz) shu restoran menyusini
+// ko'rsata oladi (backend: GET /api/v1/menu?business_code=...).
+func handleStart(token, webAppURL, businessCode string, chatID int64) error {
+	appURL := webAppURL
+	if u, err := url.Parse(webAppURL); err == nil {
+		q := u.Query()
+		q.Set("business", businessCode)
+		u.RawQuery = q.Encode()
+		appURL = u.String()
+	} else {
+		log.Printf("WEBAPP_URL'ni tahlil qilib bo'lmadi (%q): %v — business parametri qo'shilmadi", webAppURL, err)
 	}
 
 	welcomeText := "Assalomu alaykum! 👋\n\n" +
-		"Bizning botga xush kelibsiz! Buyurtma berish uchun stolingizdagi QR kodni skanerlang — " +
-		"shunda menyu aynan sizning stolingizga bog'langan holda ochiladi. 🍽️"
-	return sendMessage(token, chatID, welcomeText)
-}
+		"Bizning botga xush kelibsiz! Buyurtma berish uchun menyuni oching."
 
-func sendMessage(token string, chatID int64, text string) error {
-	return callTelegramAPI(token, "sendMessage", map[string]any{
-		"chat_id": chatID,
-		"text":    text,
-	}, nil)
+	return sendMessageWithWebApp(token, chatID, welcomeText, "🍽️ Menyuni ochish", appURL)
 }
 
 // sendMessageWithWebApp - Telegram Bot API'ning "web_app" tugma turidan foydalanadi:

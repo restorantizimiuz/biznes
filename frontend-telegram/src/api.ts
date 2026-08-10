@@ -8,6 +8,13 @@ const apiClient = axios.create({
 export const getMenuByTableToken = (tableToken: string) =>
   apiClient.get<MenuResponse>(`/qr/${tableToken}/menu`).then((r) => r.data);
 
+// Bot /start orqali WebApp ochilganda (hali hech qanday stol tanlanmagan holatda)
+// menyuni ko'rsatish uchun — business_code orqali (bot ?business= parametrini yuboradi).
+export const getMenuByBusinessCode = (businessCode: string) =>
+  apiClient
+    .get<MenuResponse>('/menu', { params: { business_code: businessCode } })
+    .then((r) => r.data);
+
 export const createTelegramOrder = (
   tableToken: string,
   initData: string,

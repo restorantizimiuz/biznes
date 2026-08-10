@@ -11,6 +11,7 @@ import (
 type Config struct {
 	Port             string
 	DatabaseURL      string
+	RedisURL         string // to'liq redis:// manzil (Railway/Render kabi hosting'lar shuni beradi)
 	RedisAddr        string
 	RedisPassword    string
 	JWTSecret        string
@@ -32,6 +33,7 @@ func Load() *Config {
 	cfg := &Config{
 		Port:             getEnv("PORT", "8080"),
 		DatabaseURL:      getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/cafesystem?sslmode=disable"),
+		RedisURL:         getEnv("REDIS_URL", ""),
 		RedisAddr:        getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisPassword:    getEnv("REDIS_PASSWORD", ""),
 		JWTSecret:        getEnv("JWT_SECRET", defaultJWTSecret),

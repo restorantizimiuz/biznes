@@ -13,8 +13,10 @@ export interface MenuCategory {
 }
 
 export interface MenuResponse {
-  table_id: string;
-  table_name: string;
+  // table_id/table_name faqat stol-token orqali (getMenuByTableToken) so'ralganda keladi —
+  // bot /start orqali (getMenuByBusinessCode) hali hech qanday stol tanlanmagan bo'ladi.
+  table_id?: string;
+  table_name?: string;
   business_id: string;
   business_name: string;
   categories: MenuCategory[];

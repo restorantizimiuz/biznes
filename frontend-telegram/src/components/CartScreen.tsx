@@ -3,27 +3,37 @@ import { formatMoney } from '../utils/format';
 import CartItem from './CartItem';
 import EmptyState from './EmptyState';
 
+type CheckoutMessage = { type: 'error' | 'info'; text: string };
+
+// Savat + checkout bitta ekranda: mahsulotlarni ko'rib chiqish, keyin "Buyurtma
+// berish" bosilganda Telegram'ning o'zining QR-skaneri ochiladi (App.tsx'da
+// boshqariladi) — bu yerda faqat skanerlash/yuborish holatlari ko'rsatiladi.
 export default function CartScreen({
-  tableName,
   lines,
   total,
+  scanning,
   submitting,
-  errorMessage,
+  checkoutMessage,
   onBack,
   onIncrement,
   onDecrement,
   onSubmit,
 }: {
-  tableName: string;
   lines: CartLine[];
   total: number;
+  scanning: boolean;
   submitting: boolean;
-  errorMessage: string;
+  checkoutMessage: CheckoutMessage | null;
   onBack: () => void;
   onIncrement: (id: string) => void;
   onDecrement: (id: string) => void;
   onSubmit: () => void;
 }) {
+  const busy = scanning || submitting;
+  let buttonText = 'Buyurtma berish';
+  if (scanning) buttonText = 'QR kod skanerlanmoqda...';
+  else if (submitting) buttonText = 'Yuborilmoqda...';
+
   return (
     <div className="animate-fade-in-up fixed inset-0 z-30 flex flex-col bg-[var(--color-bg)]">
       <header
@@ -39,7 +49,9 @@ export default function CartScreen({
         </button>
         <div>
           <h1 className="text-[17px] font-bold text-[var(--color-text)]">Savat</h1>
-          <p className="text-[12px] text-[var(--color-text-secondary)]">📍 {tableName}</p>
+          <p className="text-[12px] text-[var(--color-text-secondary)]">
+            Buyurtma berishda stol QR kodi so'raladi
+          </p>
         </div>
       </header>
 
@@ -71,17 +83,23 @@ export default function CartScreen({
               {formatMoney(total)} so'm
             </span>
           </div>
-          {errorMessage && (
-            <p className="mb-3 rounded-[var(--radius-sm)] bg-red-500/10 px-3 py-2 text-[13px] text-[var(--color-danger)]">
-              {errorMessage}
+          {checkoutMessage && (
+            <p
+              className={`mb-3 rounded-[var(--radius-sm)] px-3 py-2 text-[13px] ${
+                checkoutMessage.type === 'error'
+                  ? 'bg-red-500/10 text-[var(--color-danger)]'
+                  : 'bg-[var(--color-border)] text-[var(--color-text-secondary)]'
+              }`}
+            >
+              {checkoutMessage.text}
             </p>
           )}
           <button
             onClick={onSubmit}
-            disabled={submitting}
+            disabled={busy}
             className="flex h-13 w-full items-center justify-center rounded-full bg-[var(--color-accent)] py-3.5 text-[16px] font-semibold text-[var(--color-accent-text)] shadow-[var(--shadow-md)] transition active:scale-[0.98] disabled:opacity-60"
           >
-            {submitting ? 'Yuborilmoqda...' : 'Buyurtma berish'}
+            {buttonText}
           </button>
         </div>
       )}
