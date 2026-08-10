@@ -198,3 +198,119 @@ biznes/
 - Suhbat davomida ishlatilgan `localhost.run` tunnellari **vaqtinchalik** edi — sessiya tugagach ishlamay qoladi, faqat sinov uchun
 - Bot tokeni va boshqa maxfiy kalitlar faqat `.env` fayllarida (git'ga tushmaydi)
 - Kassa panelidan qo'lda buyurtma yaratish backend'da hali mavjud (`POST /orders`), lekin frontend'dan olib tashlangan — kerak bo'lsa kelajakda zahira variant sifatida qaytarish mumkin
+
+---
+
+## 9-bosqich — Telegram Mini App'ni "premium restoran ilovasi" darajasiga qayta dizayn qilish
+
+**Talab:** Mavjud Telegram WebApp UI'i "oddiy veb-sayt"ga o'xshab qolgan edi. Backend/API/database'ga tegmasdan, faqat `frontend-telegram/` qatlamini professional, premium darajaga olib chiqish kerak edi — aniq dizayn yo'nalishi (iOS/Telegram uslubi, mobile-first, dark mode, katta taom rasmlari va h.k.) bilan.
+
+### 9.1. Avval qilingan tahlil
+
+- **Mavjud komponentlar:** hammasi bitta `App.tsx` faylida — header, kategoriya pill, 2 ustunli grid, tasdiqlash ekrani.
+- **Saqlanishi shart bo'lgan business logic:** `api.ts` (menyu olish/buyurtma yuborish), Telegram `initData` autentifikatsiyasi, 8-bosqichda qo'shilgan QR-skaner orqali buyurtmani tasdiqlash oqimi.
+- **Aniqlangan UX muammolari:** qidiruv yo'q edi; "Barchasi" tabsiz kategoriya; mahsulot bosilganda hech narsa ochilmasdi (detail sahifa/sheet yo'q); alohida savat ekrani yo'q edi (to'g'ridan-to'g'ri buyurtma); floating cart bar yo'q; skeleton yuklanish o'rniga oddiy matn; Telegram mavzu (theme) o'zgaruvchilaridan deyarli foydalanilmagan edi; kod komponentlarga bo'linmagan edi.
+
+### 9.2. Yangi dizayn tizimi (`src/index.css`)
+
+Qattiq kodlangan ranglar o'rniga CSS o'zgaruvchilari (design tokens) yaratildi:
+
+- `--color-bg`, `--color-surface`, `--color-text`, `--color-text-secondary`, `--color-border` — bularning barchasi `var(--tg-theme-*, fallback)` orqali aniqlanadi. Telegram WebApp skripti bu o'zgaruvchilarni ildiz elementga avtomatik joylashtiradi, shuning uchun ilova **hech qanday qo'shimcha JS'siz** Telegram'ning haqiqiy light/dark mavzusiga moslashadi.
+- `--color-accent` (restoran to'q sarig'i, `#FF6A1A`) — Telegram bermaydigan brend rangi, qorong'i rejimda avtomatik yorqinroq tusga o'tadi (`#FF7A33`) kontrast uchun.
+- Qorong'i rejim uchun ikki qatlamli himoya: (1) `prefers-color-scheme: dark` — Telegram tashqarisida OS sozlamasiga moslashish uchun zaxira, (2) `[data-tg-scheme="dark"]` — `App.tsx` Telegram'ning o'zi bergan `colorScheme`ni o'qib qo'yadigan aniq belgi (OS sozlamasidan ustun, chunki foydalanuvchi Telegram ichida mavzuni alohida tanlagan bo'lishi mumkin).
+- Shrift: tashqi kutubxona ulamasdan (tezlik uchun) `-apple-system, SF Pro, Inter, Segoe UI...` zanjiri — iOS/Telegram'ga tabiiy mos ko'rinadi.
+- Yengil, faqat `transform`/`opacity` ishlatuvchi (GPU-friendly, past quvvatli qurilmalarda ham tez) animatsiya kalitlari: `sheet-slide-up`, `overlay-fade-in`, `bar-pop-in`, `qty-pulse`, `shimmer`, `fade-in-up`.
+
+### 9.3. Yangi komponent arxitekturasi
+
+Bitta katta fayl o'rniga toza bo'lingan tuzilma:
+
+| Fayl | Vazifasi |
+|---|---|
+| `src/hooks/useCart.ts` | Savat holati (miqdorlar, jami summa, mahsulotlar soni) — barcha funksiyalar `useCallback` bilan barqarorlashtirilgan, shunda kartochkalar keraksiz qayta render bo'lmaydi |
+| `src/utils/format.ts` | Pul formatlash (`formatMoney`) |
+| `components/Header.tsx` | Ixcham sarlavha: biznes nomidan monogram-logotip + nomi + "📍 Stol" belgisi (soxta reyting/logotip **o'ylab topilmadi** — faqat backenddan kelgan haqiqiy ma'lumot) |
+| `components/SearchBar.tsx` | Sticky qidiruv paneli — yuklangan menyu ustida frontendda filtrlaydi (backendga qo'shimcha so'rov yubormaydi) |
+| `components/CategoryTabs.tsx` | "Barchasi" + kategoriyalar — gorizontal scroll, sticky, faol tab pill uslubida |
+| `components/ProductCard.tsx` | Grid kartochka: rasm (yoki barqaror gradient+emoji placeholder), floating dumaloq +/− stepper, nomi, 2 qatorli tavsif, narx. `React.memo` bilan optimallashtirilgan |
+| `components/ProductModal.tsx` | Mahsulot bosilganda ochiladigan bottom sheet — katta rasm, to'liq tavsif, mahalliy stepper, dinamik narxli "Savatga qo'shish" tugmasi |
+| `components/QuantityControl.tsx` | Qayta ishlatiladigan +/− stepper (kartochka, modal, savatda bir xil) |
+| `components/CartBar.tsx` | Savatda mahsulot bo'lsa pastda suzib turuvchi panel ("N ta mahsulot — summa — Savatni ko'rish →") |
+| `components/CartScreen.tsx` | Alohida to'liq ekranli savat: stol nomi, mahsulotlar ro'yxati, jami summa, katta "Buyurtma berish" tugmasi |
+| `components/CartItem.tsx` | Savatdagi bitta qator (rasm, nomi, narxi, stepper) |
+| `components/ConfirmedScreen.tsx` | Buyurtma tasdiqlangandan keyingi ekran |
+| `components/SkeletonCard.tsx` | Professional shimmer-skeleton yuklanish holati ("Loading..." matni o'rniga) |
+| `components/EmptyState.tsx` | Umumiy bo'sh/xato holat ko'rsatkichi (bo'sh savat, qidiruv natija bermadi, xato) |
+| `App.tsx` | Endi faqat orkestratsiya — ekranlar orasida almashtiradi, holatni boshqaradi |
+| `telegram.ts` | Kengaytirildi: `BackButton`, `themeParams`, `setHeaderColor`/`setBackgroundColor`, `onEvent('themeChanged', ...)` turlari qo'shildi |
+
+### 9.4. Yangi foydalanuvchi oqimi
+
+1. **Bosh ekran** — ixcham header, qidiruv, kategoriya tablar (scroll-spy bilan — pastga aylantirilganda tegishli tab avtomatik yoritiladi), 2 ustunli mahsulot grid'i
+2. Mahsulot bosilsa → **bottom sheet** ochiladi (katta rasm, tavsif, stepper, dinamik narx)
+3. "Savatga qo'shish" bosilsa → sheet yopiladi, pastda **floating cart bar** paydo bo'ladi (animatsiya bilan)
+4. Cart bar bosilsa → **Savat ekrani** (Telegram `BackButton` bilan orqaga qaytariladi)
+5. "Buyurtma berish" bosilsa → (8-bosqichdagi) **QR-skaner tasdiqlovi** → buyurtma yuborish → **tasdiqlash ekrani**
+
+Bu — 2-3 bosishda buyurtma berish talabiga mos keladi.
+
+### 9.5. Qidiruv mantiqi
+
+Qidiruv maydoniga matn kiritilganda kategoriya tablar yashiriladi va barcha kategoriyalar bo'ylab mos keluvchi mahsulotlar (nomi yoki tavsifi bo'yicha, katta-kichik harflarga sezgir emas) yagona grid'da ko'rsatiladi; hech narsa topilmasa "Hech narsa topilmadi" holati chiqadi.
+
+### 9.6. Sinov jarayonida topilgan va tuzatilgan bug
+
+**Muammo:** `ProductCard`ning tashqi elementi `<button>` qilib yozilgan edi, uning ichida esa `QuantityControl` ham `<button>` render qilardi — natijada brauzer konsolida "button ichida button bo'lishi mumkin emas" degan React hydration xatosi chiqardi (noto'g'ri HTML).
+
+**Tuzatish:** Tashqi element `<div role="button" tabIndex={0} onKeyDown={...}>`ga almashtirildi — bosish va klaviatura orqali ochish ishlaydi, lekin ichki tugmalar endi to'g'ri, standart HTML'ga mos joylashgan.
+
+### 9.7. Sinov natijalari
+
+- ✅ `npm run build` (`tsc -b && vite build`) — xatosiz
+- ✅ `npx oxlint` — muammo topilmadi
+- ✅ Brauzer konsoli — faqat Telegram SDK'ning zararsiz "not supported in version 6.0" ogohlantirishlari (bular skript oddiy brauzerda eski versiyani simulyatsiya qilgani uchun chiqadi; haqiqiy Telegram ilovasida umuman ko'rinmaydi)
+- ✅ To'liq foydalanuvchi oqimi qo'lda sinovdan o'tkazildi: menyu → mahsulot modal → savatga qo'shish → cart bar → savat ekrani → "Buyurtma berish" (Telegram autentifikatsiyasi to'g'ri ishlagani, ya'ni business logic buzilmagani tasdiqlandi)
+- ✅ Qidiruv funksiyasi sinovdan o'tdi ("osh" deb yozilganda faqat "Osh" qoldi)
+- ✅ **Mobil** (375px kenglik — iPhone SE o'lchami): 2 ustunli grid, barcha elementlar mos tushdi
+- ✅ **Desktop** (1041px): menyu markazlashtirilgan `max-width` konteynerda, atrofida bo'sh joy chiroyli
+- ✅ **Qorong'i rejim** (`data-tg-scheme="dark"` orqali simulyatsiya qilindi): barcha ekranlar (menyu, cart bar, savat) to'g'ri, chiroyli qorong'i ranglarga o'tdi — qattiq kodlangan rang qolmagani tasdiqlandi
+
+### 9.8. Ataylab bajarilmagan narsalar (va sababi)
+
+Dizayn brifida so'ralgan, lekin backend/API'da mos ma'lumot bo'lmagani sabab **qo'shilmadi** (foydalanuvchi aniq "backend/API/databasega tegma" deb so'ragan edi, soxta ma'lumot ko'rsatish esa noto'g'ri bo'lardi):
+
+- Mahsulot detalidagi **"Tarkibi" (ingredientlar) ro'yxati** — bunday maydon `Product`da yo'q
+- Buyurtma paytidagi **"Izoh" (comment) maydoni** — backend `POST /telegram/:table_token/order` bunday parametrni qabul qilmaydi
+- Header'dagi **"⭐ 4.8" reyting** misoli — bunday ma'lumot backendda yo'q, shuning uchun o'rniga faqat haqiqiy ma'lumotlar (biznes nomi, stol) ko'rsatildi
+
+Bularni qo'shish uchun kelajakda backend'ga kichik qo'shimchalar kerak bo'ladi (masalan `order_comment` ustuni, `ingredients` maydoni).
+
+### 9.9. Yangi/o'zgargan fayllar ro'yxati (to'liq)
+
+```
+frontend-telegram/src/
+├── App.tsx                        ← to'liq qayta yozildi (orkestrator)
+├── index.css                      ← to'liq qayta yozildi (dizayn tokenlari + animatsiya)
+├── telegram.ts                    ← kengaytirildi (BackButton, theme, va h.k.)
+├── types.ts                       ← o'zgarishsiz
+├── api.ts                         ← o'zgarishsiz (business logic buzilmadi)
+├── hooks/
+│   └── useCart.ts                 ← yangi
+├── utils/
+│   └── format.ts                  ← yangi
+└── components/                    ← barchasi yangi
+    ├── Header.tsx
+    ├── SearchBar.tsx
+    ├── CategoryTabs.tsx
+    ├── ProductCard.tsx
+    ├── ProductModal.tsx
+    ├── QuantityControl.tsx
+    ├── CartBar.tsx
+    ├── CartItem.tsx
+    ├── CartScreen.tsx
+    ├── ConfirmedScreen.tsx
+    ├── SkeletonCard.tsx
+    └── EmptyState.tsx
+```
+
+**Tegilmagan qatlamlar:** `backend/`, `telegram-bot/`, `printer-helper/`, `frontend-admin/` — hech biriga o'zgartirish kiritilmadi.

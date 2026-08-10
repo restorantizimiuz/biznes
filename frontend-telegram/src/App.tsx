@@ -1,29 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createTelegramOrder, getMenuByTableToken } from './api';
 import { getTelegramWebApp } from './telegram';
-import type { MenuResponse } from './types';
+import type { MenuResponse, Product } from './types';
+import { useCart } from './hooks/useCart';
+import Header from './components/Header';
+import SearchBar from './components/SearchBar';
+import CategoryTabs, { type CategoryTab } from './components/CategoryTabs';
+import ProductCard from './components/ProductCard';
+import ProductModal from './components/ProductModal';
+import CartBar from './components/CartBar';
+import CartScreen from './components/CartScreen';
+import ConfirmedScreen from './components/ConfirmedScreen';
+import EmptyState from './components/EmptyState';
+import { SkeletonGrid } from './components/SkeletonCard';
 
 const tg = getTelegramWebApp();
-
-function formatMoney(amount: number) {
-  return amount.toLocaleString('uz-UZ');
-}
-
-// Rasm yo'q mahsulotlar uchun nomga qarab barqaror (har safar bir xil) gradient
-// tanlanadi — shunda rasmsiz kartochka ham chiroyli va tartibli ko'rinadi.
-const PLACEHOLDER_GRADIENTS = [
-  'from-orange-200 to-rose-200',
-  'from-amber-200 to-orange-300',
-  'from-rose-200 to-pink-200',
-  'from-yellow-200 to-amber-300',
-  'from-orange-200 to-amber-200',
-];
-
-function placeholderGradient(seed: string) {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
-  return PLACEHOLDER_GRADIENTS[hash % PLACEHOLDER_GRADIENTS.length];
-}
 
 // Stol QR kodi to'liq Telegram deep-link (".../start=table_<token>") sifatida
 // kodlangan, shuning uchun skaner natijasidan tokenni ajratib olamiz. Agar kimdir
@@ -36,7 +27,8 @@ function parseTableToken(scannedText: string): string | null {
   return null;
 }
 
-type Stage = 'loading' | 'error' | 'menu' | 'submitting' | 'confirmed';
+type Stage = 'loading' | 'error' | 'menu' | 'confirmed';
+type View = 'browse' | 'cart';
 
 export default function App() {
   const tableToken = useMemo(
@@ -45,18 +37,34 @@ export default function App() {
   );
 
   const [stage, setStage] = useState<Stage>('loading');
+  const [view, setView] = useState<View>('browse');
   const [errorMessage, setErrorMessage] = useState('');
   const [menu, setMenu] = useState<MenuResponse | null>(null);
-  const [cart, setCart] = useState<Record<string, number>>({});
-  const [lastOrderTotal, setLastOrderTotal] = useState(0);
   const [activeCategory, setActiveCategory] = useState<string>('');
+  const [activeProduct, setActiveProduct] = useState<Product | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [lastOrderTotal, setLastOrderTotal] = useState(0);
 
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
   const pillRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
+  // Telegram WebApp'ni ishga tushirish + mavzu (light/dark) o'zgarishini kuzatish.
+  // Ranglarning o'zi CSS o'zgaruvchilari orqali avtomatik yangilanadi (index.css) —
+  // bu yerda faqat `data-tg-scheme` atributi qo'yiladi, chunki Telegram'ning
+  // tanlagan mavzusi qurilma OS sozlamasidan farq qilishi mumkin.
   useEffect(() => {
-    tg?.ready();
-    tg?.expand();
+    if (!tg) return;
+    tg.ready();
+    tg.expand();
+    const applyScheme = () => {
+      document.documentElement.dataset.tgScheme = tg.colorScheme;
+    };
+    applyScheme();
+    tg.setHeaderColor?.('secondary_bg_color');
+    tg.setBackgroundColor?.('bg_color');
+    tg.onEvent('themeChanged', applyScheme);
+    return () => tg.offEvent('themeChanged', applyScheme);
   }, []);
 
   useEffect(() => {
@@ -79,10 +87,20 @@ export default function App() {
       });
   }, [tableToken]);
 
+  const productsById = useMemo(() => {
+    const map: Record<string, Product> = {};
+    for (const cat of menu?.categories ?? []) {
+      for (const p of cat.products) map[p.id] = p;
+    }
+    return map;
+  }, [menu]);
+
+  const cart = useCart(productsById);
+
   // Foydalanuvchi menyuni pastga aylantirganda, hozir ko'rinib turgan
   // kategoriyaga mos pastki yorliq avtomatik yoritiladi (scroll-spy).
   useEffect(() => {
-    if (stage !== 'menu' || !menu) return;
+    if (stage !== 'menu' || view !== 'browse' || !menu || searchQuery.trim()) return;
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
@@ -92,14 +110,14 @@ export default function App() {
           }
         }
       },
-      { rootMargin: '-96px 0px -70% 0px', threshold: 0 },
+      { rootMargin: '-110px 0px -70% 0px', threshold: 0 },
     );
     for (const cat of menu.categories) {
       const el = sectionRefs.current[cat.id];
       if (el) observer.observe(el);
     }
     return () => observer.disconnect();
-  }, [stage, menu]);
+  }, [stage, view, menu, searchQuery]);
 
   useEffect(() => {
     pillRefs.current[activeCategory]?.scrollIntoView({
@@ -109,55 +127,53 @@ export default function App() {
     });
   }, [activeCategory]);
 
-  const products = useMemo(() => {
-    const map: Record<string, { name: string; price: number }> = {};
-    for (const cat of menu?.categories ?? []) {
-      for (const p of cat.products) {
-        map[p.id] = { name: p.name, price: p.price };
-      }
-    }
-    return map;
-  }, [menu]);
-
-  const cartItems = Object.entries(cart).filter(([, qty]) => qty > 0);
-  const cartCount = cartItems.reduce((sum, [, qty]) => sum + qty, 0);
-  const cartTotal = cartItems.reduce((sum, [id, qty]) => sum + (products[id]?.price ?? 0) * qty, 0);
-
-  function setQuantity(productId: string, quantity: number) {
-    setCart((c) => ({ ...c, [productId]: Math.max(0, quantity) }));
-  }
+  // Telegram BackButton — savat ekranida "orqaga" ishorasi sifatida
+  useEffect(() => {
+    const btn = tg?.BackButton;
+    if (!btn) return;
+    if (view === 'cart') btn.show();
+    else btn.hide();
+    const onClick = () => setView('browse');
+    btn.onClick(onClick);
+    return () => btn.offClick(onClick);
+  }, [view]);
 
   function scrollToCategory(id: string) {
     setActiveCategory(id);
+    if (id === 'all') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
     sectionRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   async function submitOrder(confirmedTableToken: string) {
-    if (cartCount === 0) return;
-    setStage('submitting');
+    if (cart.count === 0) return;
+    setSubmitting(true);
+    setErrorMessage('');
     try {
       const initData = tg?.initData ?? '';
-      const items = cartItems.map(([product_id, quantity]) => ({ product_id, quantity }));
+      const items = cart.lines.map((l) => ({ product_id: l.product.id, quantity: l.quantity }));
       await createTelegramOrder(confirmedTableToken, initData, items);
-      setLastOrderTotal(cartTotal);
-      setCart({});
+      setLastOrderTotal(cart.total);
+      cart.clear();
       tg?.HapticFeedback?.notificationOccurred('success');
       setStage('confirmed');
+      setView('browse');
     } catch (err: any) {
       tg?.HapticFeedback?.notificationOccurred('error');
       setErrorMessage(err?.response?.data?.error ?? 'Buyurtma yuborishda xatolik yuz berdi');
-      setStage('menu');
+    } finally {
+      setSubmitting(false);
     }
   }
 
   // "Buyurtma berish" bosilganda avval stol QR kodini skanerlashni so'raymiz —
-  // shu orqali mijoz haqiqatan ham stol yonida ekanligi tasdiqlanadi.
-  // Telegram'ning WebApp skripti tashqi (oddiy) brauzerda ham yuklanadi va
-  // showScanQrPopup funksiyasi mavjud bo'lib ko'rinadi, lekin haqiqiy Telegram
-  // ilovasisiz ishlamaydi — shuning uchun buning o'rniga `initData` borligini
-  // tekshiramiz: u faqat botdan chinakam ochilganda to'ldiriladi.
+  // shu orqali mijoz haqiqatan ham stol yonida ekanligi tasdiqlanadi. Telegram
+  // tashqarisida (oddiy brauzerda sinashda) skaner mavjud emas, shu holatda
+  // to'g'ridan-to'g'ri havoladagi stol tokeni bilan yuboriladi.
   function handleOrderButtonClick() {
-    if (cartCount === 0) return;
+    if (cart.count === 0) return;
     if (!tg?.initData || !tg.showScanQrPopup) {
       submitOrder(tableToken);
       return;
@@ -168,7 +184,7 @@ export default function App() {
       (scannedText) => {
         const scannedToken = parseTableToken(scannedText);
         if (!scannedToken) {
-          setErrorMessage("Bu stol QR kodi emas. Iltimos, aynan stolingizdagi QR kodni skanerlang.");
+          setErrorMessage('Bu stol QR kodi emas. Iltimos, aynan stolingizdagi QR kodni skanerlang.');
           return false;
         }
         tg.closeScanQrPopup?.();
@@ -178,234 +194,148 @@ export default function App() {
     );
   }
 
-  // Telegram MainButton'ni savat holatiga qarab boshqarish
-  useEffect(() => {
-    const btn = tg?.MainButton;
-    if (!btn) return;
-    if (stage === 'menu' && cartCount > 0) {
-      btn.setText(`Buyurtma berish — ${formatMoney(cartTotal)} so'm`);
-      btn.show();
-      btn.enable();
-    } else {
-      btn.hide();
-    }
-    btn.onClick(handleOrderButtonClick);
-    return () => btn.offClick(handleOrderButtonClick);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stage, cartCount, cartTotal]);
+  function handleCommitProduct(quantity: number) {
+    if (activeProduct) cart.setQuantity(activeProduct.id, quantity);
+    setActiveProduct(null);
+  }
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const searchResults = useMemo(() => {
+    if (!normalizedQuery) return [];
+    return Object.values(productsById).filter(
+      (p) =>
+        p.name.toLowerCase().includes(normalizedQuery) ||
+        p.description.toLowerCase().includes(normalizedQuery),
+    );
+  }, [normalizedQuery, productsById]);
+
+  const categoryTabs: CategoryTab[] = useMemo(() => {
+    if (!menu) return [];
+    return [{ id: 'all', name: 'Barchasi' }, ...menu.categories.map((c) => ({ id: c.id, name: c.name }))];
+  }, [menu]);
 
   if (stage === 'loading') {
-    return <FullScreenState emoji="🍽️" text="Menyu yuklanmoqda..." />;
-  }
-
-  if (stage === 'error') {
-    return <FullScreenState emoji="😕" text={errorMessage} isError />;
-  }
-
-  if (stage === 'confirmed') {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-gradient-to-b from-orange-50 to-white p-6 text-center">
-        <div className="flex h-20 w-20 items-center justify-center rounded-full bg-emerald-100 text-4xl">
-          ✅
+      <div className="min-h-screen bg-[var(--color-bg)] pb-10">
+        <div className="px-4 pt-6">
+          <div className="skeleton-shimmer mb-2 h-5 w-40 rounded-full" />
+          <div className="skeleton-shimmer mb-5 h-3 w-24 rounded-full" />
+          <SkeletonGrid />
         </div>
-        <h1 className="text-xl font-bold text-stone-900">Buyurtmangiz qabul qilindi!</h1>
-        <p className="max-w-xs text-sm text-stone-500">
-          Jami:{' '}
-          <span className="font-semibold text-stone-800">{formatMoney(lastOrderTotal)} so'm</span>.
-          Ofitsiant/kassa buyurtmangizni tez orada tayyorlashni boshlaydi.
-        </p>
-        <button
-          onClick={() => setStage('menu')}
-          className="mt-4 rounded-full bg-orange-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-orange-200 hover:bg-orange-600 active:scale-95"
-        >
-          Yana buyurtma qo'shish
-        </button>
       </div>
     );
   }
 
+  if (stage === 'error') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--color-bg)]">
+        <EmptyState emoji="😕" title={errorMessage} isError />
+      </div>
+    );
+  }
+
+  if (stage === 'confirmed') {
+    return <ConfirmedScreen total={lastOrderTotal} onOrderMore={() => setStage('menu')} />;
+  }
+
   return (
-    <div className="min-h-screen bg-stone-50 pb-32">
-      {/* Header */}
-      <header className="bg-gradient-to-br from-orange-500 to-amber-500 px-5 pb-6 pt-5 text-white">
-        <h1 className="text-lg font-bold">{menu?.business_name}</h1>
-        <p className="text-sm text-orange-50/90">📍 {menu?.table_name}</p>
-      </header>
+    <div className="mx-auto min-h-screen max-w-[560px] bg-[var(--color-bg)]">
+      {view === 'cart' ? (
+        <CartScreen
+          tableName={menu?.table_name ?? ''}
+          lines={cart.lines}
+          total={cart.total}
+          submitting={submitting}
+          errorMessage={errorMessage}
+          onBack={() => setView('browse')}
+          onIncrement={cart.increment}
+          onDecrement={cart.decrement}
+          onSubmit={handleOrderButtonClick}
+        />
+      ) : (
+        <div className="pb-28">
+          <Header businessName={menu?.business_name ?? ''} tableName={menu?.table_name ?? ''} />
 
-      {/* Category pills */}
-      {menu && menu.categories.length > 1 && (
-        <div className="sticky top-0 z-10 -mt-4 border-b border-stone-100 bg-white/95 px-3 py-3 backdrop-blur">
-          <div className="no-scrollbar flex gap-2 overflow-x-auto px-2">
-            {menu.categories.map((cat) => (
-              <button
-                key={cat.id}
-                ref={(el) => {
-                  pillRefs.current[cat.id] = el;
-                }}
-                onClick={() => scrollToCategory(cat.id)}
-                className={`shrink-0 rounded-full px-4 py-2 text-sm font-medium transition ${
-                  activeCategory === cat.id
-                    ? 'bg-orange-500 text-white shadow-md shadow-orange-200'
-                    : 'bg-stone-100 text-stone-600'
-                }`}
-              >
-                {cat.name}
-              </button>
-            ))}
+          <div className="px-4 pb-1">
+            <SearchBar value={searchQuery} onChange={setSearchQuery} />
           </div>
-        </div>
-      )}
 
-      {errorMessage && (
-        <p className="mx-4 mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">
-          {errorMessage}
-        </p>
-      )}
-
-      <div className="space-y-7 px-4 pt-5">
-        {menu?.categories.map((cat) => (
-          <section
-            key={cat.id}
-            data-category-id={cat.id}
-            ref={(el) => {
-              sectionRefs.current[cat.id] = el;
-            }}
-            className="scroll-mt-24"
-          >
-            <h2 className="mb-3 text-base font-bold text-stone-900">{cat.name}</h2>
-            <div className="grid grid-cols-2 gap-3">
-              {cat.products.map((p) => (
-                <ProductCard
-                  key={p.id}
-                  name={p.name}
-                  description={p.description}
-                  price={p.price}
-                  imageUrl={p.image_url}
-                  quantity={cart[p.id] ?? 0}
-                  onChange={(q) => setQuantity(p.id, q)}
-                />
-              ))}
+          {!normalizedQuery && categoryTabs.length > 1 && (
+            <div className="sticky top-0 z-10 bg-[var(--color-bg)]/95 backdrop-blur">
+              <CategoryTabs
+                tabs={categoryTabs}
+                activeId={activeCategory || 'all'}
+                onSelect={scrollToCategory}
+                pillRefs={pillRefs}
+              />
             </div>
-          </section>
-        ))}
-        {menu?.categories.length === 0 && (
-          <p className="pt-10 text-center text-sm text-stone-400">Hozircha menyu bo'sh</p>
-        )}
-      </div>
+          )}
 
-      {/* Telegram tashqarisida (oddiy brauzerda) sinash uchun zaxira tugma —
-          Telegram ichida buning o'rniga native MainButton ko'rinadi. Telegram'ning
-          WebApp skripti oddiy brauzerda ham yuklanadi, shuning uchun obyekt
-          mavjudligi emas, `initData` to'ldirilganligi tekshiriladi. */}
-      {!tg?.initData && cartCount > 0 && (
-        <div className="fixed inset-x-0 bottom-0 border-t border-stone-200 bg-white/95 p-3 backdrop-blur">
-          <button
-            onClick={handleOrderButtonClick}
-            disabled={stage === 'submitting'}
-            className="flex w-full items-center justify-center gap-2 rounded-full bg-orange-500 px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-orange-200 hover:bg-orange-600 disabled:opacity-60"
-          >
-            {stage === 'submitting' ? (
-              'Yuborilmoqda...'
+          <div className="px-4 pt-3">
+            {normalizedQuery ? (
+              searchResults.length > 0 ? (
+                <div className="grid grid-cols-2 gap-3">
+                  {searchResults.map((p) => (
+                    <ProductCard
+                      key={p.id}
+                      product={p}
+                      quantity={cart.quantities[p.id] ?? 0}
+                      onIncrement={cart.increment}
+                      onDecrement={cart.decrement}
+                      onOpen={setActiveProduct}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <EmptyState emoji="🔎" title="Hech narsa topilmadi" subtitle="Boshqa nom bilan qidiring" />
+              )
             ) : (
-              <>
-                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/25 text-xs">
-                  {cartCount}
-                </span>
-                Buyurtma berish — {formatMoney(cartTotal)} so'm
-              </>
+              <div className="space-y-6">
+                {menu?.categories.map((cat) => (
+                  <section
+                    key={cat.id}
+                    data-category-id={cat.id}
+                    ref={(el) => {
+                      sectionRefs.current[cat.id] = el;
+                    }}
+                    className="scroll-mt-28"
+                  >
+                    <h2 className="mb-2.5 text-[15px] font-bold text-[var(--color-text)]">{cat.name}</h2>
+                    <div className="grid grid-cols-2 gap-3">
+                      {cat.products.map((p) => (
+                        <ProductCard
+                          key={p.id}
+                          product={p}
+                          quantity={cart.quantities[p.id] ?? 0}
+                          onIncrement={cart.increment}
+                          onDecrement={cart.decrement}
+                          onOpen={setActiveProduct}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                ))}
+                {menu?.categories.length === 0 && (
+                  <EmptyState emoji="🍽️" title="Hozircha menyu bo'sh" />
+                )}
+              </div>
             )}
-          </button>
+          </div>
         </div>
       )}
-    </div>
-  );
-}
 
-function ProductCard({
-  name,
-  description,
-  price,
-  imageUrl,
-  quantity,
-  onChange,
-}: {
-  name: string;
-  description: string;
-  price: number;
-  imageUrl: string;
-  quantity: number;
-  onChange: (q: number) => void;
-}) {
-  const [imgFailed, setImgFailed] = useState(false);
-  const showImage = imageUrl && !imgFailed;
+      {view === 'browse' && cart.count > 0 && (
+        <CartBar count={cart.count} total={cart.total} onOpen={() => setView('cart')} />
+      )}
 
-  return (
-    <div className="flex flex-col overflow-hidden rounded-2xl bg-white shadow-sm shadow-stone-200/60 ring-1 ring-stone-100">
-      <div className="relative aspect-square w-full overflow-hidden bg-stone-100">
-        {showImage ? (
-          <img
-            src={imageUrl}
-            alt={name}
-            loading="lazy"
-            onError={() => setImgFailed(true)}
-            className="h-full w-full object-cover"
-          />
-        ) : (
-          <div
-            className={`flex h-full w-full items-center justify-center bg-gradient-to-br text-3xl ${placeholderGradient(name)}`}
-          >
-            🍽️
-          </div>
-        )}
-        {quantity === 0 ? (
-          <button
-            onClick={() => onChange(1)}
-            className="absolute bottom-2 right-2 flex h-8 w-8 items-center justify-center rounded-full bg-white text-lg font-semibold text-orange-500 shadow-md active:scale-90"
-          >
-            +
-          </button>
-        ) : (
-          <div className="absolute bottom-2 right-2 flex items-center gap-1 rounded-full bg-white px-1 py-1 shadow-md">
-            <button
-              onClick={() => onChange(quantity - 1)}
-              className="flex h-6 w-6 items-center justify-center rounded-full text-orange-500 active:scale-90"
-            >
-              −
-            </button>
-            <span className="w-4 text-center text-xs font-semibold text-stone-900">{quantity}</span>
-            <button
-              onClick={() => onChange(quantity + 1)}
-              className="flex h-6 w-6 items-center justify-center rounded-full text-orange-500 active:scale-90"
-            >
-              +
-            </button>
-          </div>
-        )}
-      </div>
-      <div className="flex flex-1 flex-col gap-1 p-3">
-        <p className="line-clamp-1 text-sm font-semibold text-stone-900">{name}</p>
-        {description && (
-          <p className="line-clamp-2 text-xs leading-snug text-stone-400">{description}</p>
-        )}
-        <p className="mt-auto pt-1 text-sm font-bold text-orange-600">{formatMoney(price)} so'm</p>
-      </div>
-    </div>
-  );
-}
-
-function FullScreenState({
-  emoji,
-  text,
-  isError,
-}: {
-  emoji: string;
-  text: string;
-  isError?: boolean;
-}) {
-  return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-3 p-6 text-center">
-      <div className="text-4xl">{emoji}</div>
-      <p className={`text-sm ${isError ? 'text-red-600' : 'text-stone-500'}`}>{text}</p>
+      {activeProduct && (
+        <ProductModal
+          product={activeProduct}
+          cartQuantity={cart.quantities[activeProduct.id] ?? 0}
+          onClose={() => setActiveProduct(null)}
+          onCommit={handleCommitProduct}
+        />
+      )}
     </div>
   );
 }
