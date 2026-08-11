@@ -440,10 +440,14 @@ const (
 )
 
 // listUsers - ListUsers va ListStaff bir xil manbadan (users jadvali) o'qiydi,
-// faqat standart rol filtri bilan farqlanadi — shuning uchun SQL bitta joyda.
+// faqat rol filtri bilan farqlanadi — shuning uchun SQL bitta joyda.
 // `users` jadvalida alohida "staff" jadval yo'q: kassir/ofitsiant ham shu
 // jadvalda role ustuni bilan saqlanadi (backend/migrations/001_init_schema.sql).
-func (h *PlatformHandler) listUsers(c *fiber.Ctx, defaultRoles []string) error {
+//
+// allowedRoles berilsa (ListStaff uchun), natija HAR DOIM shu ro'yxat bilan
+// cheklanadi — ?role= parametri orqali ham chetlab o'tib bo'lmaydi (masalan
+// /platform/staff?role=owner bo'sh natija qaytaradi, owner qatorlarini emas).
+func (h *PlatformHandler) listUsers(c *fiber.Ctx, defaultRoles, allowedRoles []string) error {
 	ctx := context.Background()
 
 	limit := c.QueryInt("limit", platformListLimitDefault)
@@ -467,7 +471,15 @@ func (h *PlatformHandler) listUsers(c *fiber.Ctx, defaultRoles []string) error {
 	if roleParam := c.Query("role"); roleParam != "" {
 		roles = strings.Split(roleParam, ",")
 	}
-	if len(roles) > 0 {
+	if allowedRoles != nil {
+		roles = intersectRoles(roles, allowedRoles)
+	}
+	// `roles != nil` (nafaqat len>0) — chunki ruxsat etilgan ro'yxatga
+	// mos kelmagan so'rov (masalan staff'da role=owner) bo'sh, lekin
+	// nil BO'LMAGAN slice beradi: filtr baribir qo'shiladi va SQL
+	// `= ANY('{}')` hech qanday qator bilan mos kelmaydi — filtrsiz
+	// "hammasi" qaytarish o'rniga to'g'ri bo'sh natija chiqadi.
+	if roles != nil {
 		args = append(args, roles)
 		where = append(where, fmt.Sprintf("u.role::text = ANY($%d)", len(args)))
 	}
@@ -520,14 +532,37 @@ func (h *PlatformHandler) listUsers(c *fiber.Ctx, defaultRoles []string) error {
 // Filtrlar: ?business_id=, ?role=cashier,waiter, ?status=active|inactive,
 // sahifalash: ?limit=&offset=.
 func (h *PlatformHandler) ListUsers(c *fiber.Ctx) error {
-	return h.listUsers(c, nil)
+	return h.listUsers(c, nil, nil)
 }
 
+// staffRoles - "xodim" kontraktini belgilaydi: faqat kassir va ofitsiant.
+var staffRoles = []string{"cashier", "waiter"}
+
 // ListStaff - platformadagi xizmat ko'rsatuvchi xodimlar (kassir/ofitsiant).
-// ListUsers bilan bir xil so'rovni ishlatadi, standart rol filtri bilan —
-// ?role= ko'rsatilsa o'sha ustunlik qiladi.
+// Bu kontrakt qat'iy: ?role= parametri faqat staffRoles ichida TORAYTIRISH
+// uchun ishlatiladi (masalan ?role=cashier), undan tashqariga chiqib
+// bo'lmaydi — ?role=owner yoki ?role=admin bo'sh natija qaytaradi.
 func (h *PlatformHandler) ListStaff(c *fiber.Ctx) error {
-	return h.listUsers(c, []string{"cashier", "waiter"})
+	return h.listUsers(c, staffRoles, staffRoles)
+}
+
+// intersectRoles - so'ralgan rollarni ruxsat etilganlar bilan kesishmasiga
+// qisqartiradi. Har doim NIL BO'LMAGAN slice qaytaradi (bo'sh bo'lsa ham) —
+// shu orqali chaqiruvchi "filtr yo'q" bilan "filtr hech narsaga mos kelmadi"ni
+// ajrata oladi.
+func intersectRoles(requested, allowed []string) []string {
+	allowedSet := make(map[string]bool, len(allowed))
+	for _, r := range allowed {
+		allowedSet[strings.TrimSpace(r)] = true
+	}
+	result := []string{}
+	for _, r := range requested {
+		r = strings.TrimSpace(r)
+		if allowedSet[r] {
+			result = append(result, r)
+		}
+	}
+	return result
 }
 
 // ---------------------------------------------------------------------------
