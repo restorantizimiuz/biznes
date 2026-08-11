@@ -35,9 +35,12 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-slate-900 p-4">
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-sm space-y-4 rounded-xl bg-white p-6 shadow-xl"
+        className="w-full max-w-sm space-y-4 rounded-2xl bg-white p-6 shadow-[0_1px_2px_rgba(15,23,42,0.06),0_20px_40px_-16px_rgba(79,70,229,0.35)] sm:p-8"
       >
-        <div>
+        <div className="flex flex-col items-center text-center">
+          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-2xl shadow-sm">
+            ☕
+          </div>
           <h1 className="text-lg font-semibold text-slate-900">Platforma paneli</h1>
           <p className="text-xs text-slate-500">Cafe System — super-admin</p>
         </div>
@@ -48,7 +51,7 @@ export default function LoginPage() {
             value={login}
             onChange={(e) => setLogin(e.target.value)}
             autoFocus
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
           />
         </label>
 
@@ -58,7 +61,7 @@ export default function LoginPage() {
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
           />
         </label>
 
@@ -67,7 +70,7 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={submitting}
-          className="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+          className="w-full rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-700 disabled:opacity-60"
         >
           {submitting ? 'Kirilmoqda...' : 'Kirish'}
         </button>

@@ -15,7 +15,7 @@ export default function ModalShell({
 }) {
   return (
     <div className="fixed inset-0 z-30 flex items-stretch justify-center bg-black/50 sm:items-center sm:p-4">
-      <div className="flex h-full w-full flex-col overflow-hidden bg-white shadow-lg sm:max-h-[90vh] sm:max-w-2xl sm:rounded-xl">
+      <div className="flex h-full w-full flex-col overflow-hidden bg-white shadow-xl sm:max-h-[90vh] sm:max-w-2xl sm:rounded-2xl">
         <div className="flex shrink-0 items-center gap-3 border-b border-slate-200 px-5 py-4">
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-lg font-semibold text-slate-900">{title}</h2>

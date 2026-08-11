@@ -35,8 +35,9 @@ npm run dev     # http://localhost:5175
 
 Boshlang'ich hisob (007-migratsiyada yaratiladi):
 
-| Login | Parol |
-|---|---|
+
+| Login        | Parol       |
+| ------------ | ----------- |
 | `superadmin` | `super1234` |
 
 > **Productionga chiqarishdan oldin** parolni albatta o'zgartiring va
@@ -45,3 +46,7 @@ Boshlang'ich hisob (007-migratsiyada yaratiladi):
 ## Sozlash
 
 `VITE_API_URL` — backend manzili (standart `http://localhost:8080/api/v1`).
+
+
+
+> **men yangi dizayn kiritim va ishga tushurdim**
