@@ -28,4 +28,14 @@ apiClient.interceptors.response.use(
   },
 );
 
+// Yuklangan rasmlar backenddan "/uploads/..." ko'rinishida nisbiy havola bilan
+// keladi. Frontend boshqa portda ishlagani uchun uni backend manziliga bog'laymiz.
+export function resolveImageUrl(url: string): string {
+  if (!url) return '';
+  if (/^https?:\/\//i.test(url) || url.startsWith('data:')) return url;
+  const base = apiClient.defaults.baseURL ?? '';
+  const origin = base.replace(/\/api\/v1\/?$/, '');
+  return `${origin}${url.startsWith('/') ? '' : '/'}${url}`;
+}
+
 export default apiClient;

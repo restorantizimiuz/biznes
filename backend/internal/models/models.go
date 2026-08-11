@@ -70,8 +70,9 @@ type Order struct {
 	ID              string      `json:"id"`
 	BusinessID      string      `json:"business_id"`
 	TableID         *string     `json:"table_id"`
-	Source          string      `json:"source"` // cashier, qr, online_telegram, waiter
-	Status          string      `json:"status"` // new, activated, paid, cancelled
+	Source          string      `json:"source"`         // cashier, qr, online_telegram, waiter
+	Status          string      `json:"status"`         // new, activated, paid, cancelled
+	KitchenStatus   string      `json:"kitchen_status"` // preparing, ready
 	CreatedByUserID *string     `json:"created_by_user_id"`
 	TotalAmount     float64     `json:"total_amount"`
 	DiscountAmount  float64     `json:"discount_amount"`

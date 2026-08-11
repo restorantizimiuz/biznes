@@ -1,85 +1,151 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  activateOrder,
+  addOrderItems,
+  applyDiscount,
   cancelOrder,
+  createOrder,
+  deleteOrderItem,
   getReceipt,
   listActiveOrders,
+  listCategories,
+  listFloors,
+  listProducts,
+  listTables,
+  markReceiptPrinted,
   payOrder,
   sendReceiptTelegram,
+  updateKitchenStatus,
+  updateOrderItem,
 } from '../api/endpoints';
-import type { ActiveOrder } from '../api/types';
-import { tryPrintReceipt } from '../printer';
+import type { ActiveOrder, Table } from '../api/types';
+import { checkPrinterHealth, tryPrintReceipt } from '../printer';
+import { useTranslation } from '../i18n/LanguageContext';
+import type { TranslationKey } from '../i18n/dictionaries';
+import ModalShell from '../components/ModalShell';
+import ProductPickCard from '../components/ProductPickCard';
+import { useOrderNotifications } from '../notifications/useOrderNotifications';
 
-const STATUS_LABEL: Record<string, string> = {
-  new: 'Yangi',
-  activated: 'Faol',
-  paid: "To'langan",
-  cancelled: 'Bekor qilingan',
+type PaymentMethod = 'cash' | 'card' | 'transfer';
+type CardType = 'uzcard' | 'humo' | 'visa' | 'mastercard';
+
+const CARD_TYPES: CardType[] = ['uzcard', 'humo', 'visa', 'mastercard'];
+
+// Stol katakchasining rangi buyurtma holatiga qarab tanlanadi — kassir zalga
+// bir qarab qaysi stol e'tibor talab qilishini ko'rishi uchun.
+function tableAppearance(order: ActiveOrder | undefined) {
+  if (!order) return { box: 'border-slate-200 bg-white', badge: 'bg-slate-100 text-slate-500' };
+  if (order.status === 'new')
+    return { box: 'border-red-300 bg-red-50 ring-2 ring-red-200', badge: 'bg-red-100 text-red-700' };
+  if (order.kitchen_status === 'ready')
+    return { box: 'border-emerald-300 bg-emerald-50', badge: 'bg-emerald-100 text-emerald-700' };
+  return { box: 'border-amber-300 bg-amber-50', badge: 'bg-amber-100 text-amber-700' };
+}
+
+function tableStatusKey(order: ActiveOrder | undefined): TranslationKey {
+  if (!order) return 'orders.tableEmpty';
+  if (order.status === 'new') return 'orders.pendingApproval';
+  return order.kitchen_status === 'ready' ? 'orders.ready' : 'orders.preparing';
+}
+
+const ORDER_TYPE_EMOJI: Record<string, string> = {
+  dine_in: '🍽️',
+  delivery: '🚚',
+  pickup: '🥡',
 };
 
-// Buyurtma yaratish endi faqat Telegram bot orqali (mijoz stol QR kodini skanerlab,
-// botda menyuni ochib buyurtma beradi) — kassa paneli faqat kuzatish va to'lov uchun.
+// Printer holati 30 soniyada bir tekshiriladi: tez-tez so'rash keraksiz,
+// juda kam so'rash esa uzilishni kech ko'rsatadi.
+const PRINTER_HEALTH_INTERVAL_MS = 30000;
+
 export default function OrdersPage() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { data: orders = [], isLoading } = useQuery({
+  const { focusOrderId, clearFocus } = useOrderNotifications();
+
+  const { data: floors = [] } = useQuery({ queryKey: ['floors'], queryFn: listFloors });
+  // '' — birinchi qavat, 'online' — stolsiz (yetkazib berish/olib ketish) buyurtmalar
+  const [activeFloor, setActiveFloor] = useState('');
+  const onlineView = activeFloor === 'online';
+  const floorId = onlineView ? '' : activeFloor || floors[0]?.id || '';
+
+  const { data: tables = [] } = useQuery({
+    queryKey: ['tables', floorId],
+    queryFn: () => listTables(floorId),
+    enabled: !!floorId,
+  });
+
+  // WebSocket asosiy yo'l, lekin 5 soniyalik so'rov zaxira bo'lib qoladi —
+  // ulanish uzilsa ham kassa ishlashda davom etadi.
+  const { data: orders = [] } = useQuery({
     queryKey: ['active-orders'],
     queryFn: listActiveOrders,
     refetchInterval: 5000,
   });
 
-  const [payTarget, setPayTarget] = useState<ActiveOrder | null>(null);
-  const [paying, setPaying] = useState(false);
-  const [payError, setPayError] = useState<string | null>(null);
-  const [receiptStatus, setReceiptStatus] = useState<string | null>(null);
-
-  const cancelMutation = useMutation({
-    mutationFn: ({ id, reason }: { id: string; reason: string }) => cancelOrder(id, reason),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['active-orders'] }),
+  const { data: printerOnline = false } = useQuery({
+    queryKey: ['printer-health'],
+    queryFn: checkPrinterHealth,
+    refetchInterval: PRINTER_HEALTH_INTERVAL_MS,
   });
 
-  function handleCancel(id: string) {
-    const reason = prompt("Bekor qilish sababini kiriting:");
-    if (reason) cancelMutation.mutate({ id, reason });
-  }
+  const ordersByTable = useMemo(() => {
+    const map: Record<string, ActiveOrder> = {};
+    for (const o of orders) if (o.table_id) map[o.table_id] = o;
+    return map;
+  }, [orders]);
 
-  async function confirmPayment(order: ActiveOrder) {
-    setPaying(true);
-    setPayError(null);
-    try {
-      await payOrder(order.id, [{ method: 'cash', amount: order.final_amount }]);
-      queryClient.invalidateQueries({ queryKey: ['active-orders'] });
-      setPayTarget(null);
+  const onlineOrders = useMemo(() => orders.filter((o) => !o.table_id), [orders]);
+  const newOnlineCount = onlineOrders.filter((o) => o.status === 'new').length;
 
-      const tableLabel = order.table_name ?? 'Buyurtma';
-      try {
-        const receipt = await getReceipt(order.id);
-        const printed = await tryPrintReceipt(receipt);
-        if (printed) {
-          setReceiptStatus(`${tableLabel}: chek printerga yuborildi.`);
-        } else if (order.telegram_id) {
-          await sendReceiptTelegram(order.id);
-          setReceiptStatus(`${tableLabel}: printer topilmadi, chek mijozga Telegram orqali yuborildi.`);
-        } else {
-          setReceiptStatus(`${tableLabel}: printer topilmadi va mijozning Telegram profili yo'q — chekni qo'lda taqdim eting.`);
-        }
-      } catch {
-        setReceiptStatus(`${tableLabel}: to'lov saqlandi, lekin chekni chiqarib/yuborib bo'lmadi.`);
-      }
-    } catch (err: any) {
-      setPayError(err?.response?.data?.error ?? "To'lovni saqlashda xatolik yuz berdi");
-    } finally {
-      setPaying(false);
+  const [openTableId, setOpenTableId] = useState<string | null>(null);
+  const [openOrderId, setOpenOrderId] = useState<string | null>(null);
+  const [receiptStatus, setReceiptStatus] = useState<string | null>(null);
+
+  // Bildirishnoma banneri bosilganda o'sha buyurtma oynasi ochiladi.
+  useEffect(() => {
+    if (!focusOrderId) return;
+    const order = orders.find((o) => o.id === focusOrderId);
+    if (!order) return;
+    if (order.table_id) {
+      const floor = floors.find(() => true);
+      if (floor) setActiveFloor((current) => current || floor.id);
+      setOpenTableId(order.table_id);
+    } else {
+      setActiveFloor('online');
+      setOpenOrderId(order.id);
     }
+    clearFocus();
+  }, [focusOrderId, orders, floors, clearFocus]);
+
+  // Ochiq oyna ma'lumoti har yangilanishdan keyin ham dolzarb bo'lishi uchun
+  // ID orqali qidiriladi (nusxa saqlanmaydi).
+  const openTable = tables.find((tb) => tb.id === openTableId) ?? null;
+  const openTableOrder = openTableId ? ordersByTable[openTableId] : undefined;
+  const openOnlineOrder = orders.find((o) => o.id === openOrderId);
+
+  function refreshOrders() {
+    queryClient.invalidateQueries({ queryKey: ['active-orders'] });
+    queryClient.invalidateQueries({ queryKey: ['tables', floorId] });
   }
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold text-slate-900">Kassa — faol buyurtmalar</h1>
-        <p className="text-sm text-slate-500">
-          Har 5 soniyada avtomatik yangilanadi. Yangi buyurtmalar mijozlar tomonidan Telegram bot
-          orqali beriladi.
-        </p>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3 sm:mb-6">
+        <div>
+          <h1 className="text-lg font-semibold text-slate-900 sm:text-xl">{t('orders.title')}</h1>
+          <p className="text-sm text-slate-500">{t('orders.subtitle')}</p>
+        </div>
+        {/* Printer holati: kassir chek chiqmasligini to'lov paytida emas,
+            oldindan bilib turishi kerak. */}
+        <span
+          className={`rounded-full px-3 py-1 text-xs font-medium ${
+            printerOnline ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+          }`}
+        >
+          🖨️ {printerOnline ? t('receipt.printerOnline') : t('receipt.printerOffline')}
+        </span>
       </div>
 
       {receiptStatus && (
@@ -88,145 +154,764 @@ export default function OrdersPage() {
         </p>
       )}
 
-      {isLoading && <p className="text-sm text-slate-500">Yuklanmoqda...</p>}
-      {!isLoading && orders.length === 0 && (
-        <p className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">
-          Hozircha faol buyurtma yo'q
-        </p>
-      )}
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {orders.map((o) => (
-          <div key={o.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
-                {STATUS_LABEL[o.status] ?? o.status}
-              </span>
-              <span className="text-xs text-slate-400">{o.source}</span>
-            </div>
-            <p className="text-sm font-medium text-slate-900">{o.table_name ?? 'Onlayn buyurtma'}</p>
-            {o.telegram_username ? (
-              <p className="mb-1 text-xs text-sky-600">@{o.telegram_username}</p>
-            ) : o.telegram_id ? (
-              <p className="mb-1 text-xs text-sky-600">Telegram ID: {o.telegram_id}</p>
-            ) : null}
-            <p className="mb-1 mt-1 text-lg font-semibold text-slate-900">
-              {o.final_amount.toLocaleString()} so'm
-            </p>
-            <p className="mb-4 text-xs text-slate-400">ID: {o.id.slice(0, 8)}</p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setPayTarget(o)}
-                className="flex-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
-              >
-                To'lash
-              </button>
-              <button
-                onClick={() => handleCancel(o.id)}
-                className="flex-1 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
-              >
-                Bekor qilish
-              </button>
-            </div>
-          </div>
+      <div className="mb-4 flex flex-wrap gap-2">
+        {floors.map((f) => (
+          <button
+            key={f.id}
+            onClick={() => setActiveFloor(f.id)}
+            className={`rounded-lg px-3 py-2 text-sm font-medium ${
+              !onlineView && f.id === floorId
+                ? 'bg-indigo-600 text-white'
+                : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            {f.name}
+          </button>
         ))}
+        <button
+          onClick={() => setActiveFloor('online')}
+          className={`relative rounded-lg px-3 py-2 text-sm font-medium ${
+            onlineView
+              ? 'bg-indigo-600 text-white'
+              : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          🚚 {t('orders.online')}
+          {newOnlineCount > 0 && (
+            <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[11px] font-bold text-white">
+              {newOnlineCount}
+            </span>
+          )}
+        </button>
       </div>
 
-      {payTarget && (
-        <PaymentConfirmModal
-          order={payTarget}
-          submitting={paying}
-          error={payError}
-          onCancel={() => {
-            setPayTarget(null);
-            setPayError(null);
-          }}
-          onConfirm={() => confirmPayment(payTarget)}
+      {onlineView ? (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {onlineOrders.map((o) => {
+            const look = tableAppearance(o);
+            return (
+              <button
+                key={o.id}
+                onClick={() => setOpenOrderId(o.id)}
+                className={`rounded-xl border p-4 text-left shadow-sm transition hover:shadow-md ${look.box}`}
+              >
+                <div className="mb-2 flex items-start justify-between gap-2">
+                  <p className="font-semibold text-slate-900">
+                    {ORDER_TYPE_EMOJI[o.order_type]} {t(`orders.type.${o.order_type}` as TranslationKey)}
+                  </p>
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${look.badge}`}
+                  >
+                    {t(tableStatusKey(o))}
+                  </span>
+                </div>
+                {o.customer_phone && <p className="text-xs text-slate-600">📞 {o.customer_phone}</p>}
+                {o.delivery_address && (
+                  <p className="truncate text-xs text-slate-500">📍 {o.delivery_address}</p>
+                )}
+                <p className="mt-1.5 text-lg font-semibold text-slate-900">
+                  {o.final_amount.toLocaleString()} {t('app.currency')}
+                </p>
+                <p className="mt-1 truncate text-xs text-slate-500">
+                  {o.items.map((i) => `${i.product_name} ×${i.quantity}`).join(', ')}
+                </p>
+              </button>
+            );
+          })}
+          {onlineOrders.length === 0 && (
+            <p className="col-span-full rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">
+              {t('orders.noOnlineOrders')}
+            </p>
+          )}
+        </div>
+      ) : floors.length === 0 ? (
+        <p className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">
+          {t('orders.noFloors')}
+        </p>
+      ) : (
+        // Telefonda 2 ustun, planshetda 3, kompyuterda 4-5 — stol katakchalari
+        // barmoq bilan bosiladigan o'lchamda qoladi.
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          {tables.map((table) => {
+            const order = ordersByTable[table.id];
+            const look = tableAppearance(order);
+            return (
+              <button
+                key={table.id}
+                onClick={() => setOpenTableId(table.id)}
+                className={`rounded-xl border p-3 text-left shadow-sm transition hover:shadow-md sm:p-4 ${look.box}`}
+              >
+                <div className="mb-2 flex items-start justify-between gap-1.5">
+                  <p className="truncate font-semibold text-slate-900">{table.name}</p>
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${look.badge}`}
+                  >
+                    {t(tableStatusKey(order))}
+                  </span>
+                </div>
+                {order ? (
+                  <>
+                    <p className="text-base font-semibold text-slate-900 sm:text-lg">
+                      {order.final_amount.toLocaleString()} {t('app.currency')}
+                    </p>
+                    <p className="mt-1 truncate text-xs text-slate-500">
+                      {order.items.map((i) => `${i.product_name} ×${i.quantity}`).join(', ')}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-sm text-slate-400">—</p>
+                )}
+              </button>
+            );
+          })}
+          {floorId && tables.length === 0 && (
+            <p className="col-span-full rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">
+              {t('orders.noTables')}
+            </p>
+          )}
+        </div>
+      )}
+
+      {openTable && (
+        <OrderModal
+          title={openTable.name}
+          table={openTable}
+          order={openTableOrder}
+          onClose={() => setOpenTableId(null)}
+          onChanged={refreshOrders}
+          onReceiptStatus={setReceiptStatus}
+        />
+      )}
+
+      {openOnlineOrder && (
+        <OrderModal
+          title={`${ORDER_TYPE_EMOJI[openOnlineOrder.order_type]} ${t(
+            `orders.type.${openOnlineOrder.order_type}` as TranslationKey,
+          )}`}
+          order={openOnlineOrder}
+          onClose={() => setOpenOrderId(null)}
+          onChanged={refreshOrders}
+          onReceiptStatus={setReceiptStatus}
         />
       )}
     </div>
   );
 }
 
-// Xato bilan noto'g'ri stolni to'langan deb belgilashning oldini olish uchun
-// to'lov ikki bosqichda tasdiqlanadi: avval ma'lumot ko'rsatiladi, so'ng
-// alohida "haqiqatan ham?" bosqichida yakuniy tasdiq so'raladi.
-function PaymentConfirmModal({
+/**
+ * Chekni chiqarish: avval lokal printer, bo'lmasa Telegram, u ham bo'lmasa
+ * kassirga xabar. Bu oqim to'lovdan **mustaqil** — hisob-fakturani ham,
+ * to'langan chekni ham shu funksiya chiqaradi.
+ */
+async function printReceiptFlow(
+  order: ActiveOrder,
+  preBill: boolean,
+  t: (key: TranslationKey) => string,
+): Promise<string> {
+  try {
+    const receipt = await getReceipt(order.id, preBill);
+    if (await tryPrintReceipt(receipt)) {
+      await markReceiptPrinted(order.id, preBill);
+      return t('receipt.printed');
+    }
+    if (order.telegram_id) {
+      await sendReceiptTelegram(order.id);
+      return t('pay.receipt.telegram');
+    }
+    return t('receipt.failed');
+  } catch {
+    return t('receipt.failed');
+  }
+}
+
+// Stol oynasi va online buyurtma oynasi bir xil ichki ekranlardan foydalanadi.
+// `table` berilmasa (online buyurtma) — taom qo'shish paneli ko'rsatilmaydi,
+// chunki yangi buyurtma faqat stol uchun ochiladi.
+function OrderModal({
+  title,
+  table,
   order,
-  submitting,
-  error,
-  onCancel,
-  onConfirm,
+  onClose,
+  onChanged,
+  onReceiptStatus,
 }: {
-  order: ActiveOrder;
-  submitting: boolean;
-  error: string | null;
-  onCancel: () => void;
-  onConfirm: () => void;
+  title: string;
+  table?: Table;
+  order: ActiveOrder | undefined;
+  onClose: () => void;
+  onChanged: () => void;
+  onReceiptStatus: (message: string) => void;
 }) {
-  const [step, setStep] = useState<1 | 2>(1);
-  const tableLabel = order.table_name ?? 'Onlayn buyurtma';
+  const { t } = useTranslation();
+  const [screen, setScreen] = useState<'main' | 'pay'>('main');
+
+  const subtitleParts: string[] = [];
+  if (order) {
+    subtitleParts.push(t(`orders.source.${order.source}` as TranslationKey));
+    if (order.telegram_username) subtitleParts.push(`@${order.telegram_username}`);
+    if (order.customer_phone) subtitleParts.push(order.customer_phone);
+    if (order.delivery_address) subtitleParts.push(order.delivery_address);
+  }
 
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
-        {step === 1 ? (
-          <>
-            <h2 className="mb-2 text-lg font-semibold text-slate-900">To'lovni tasdiqlash</h2>
-            <p className="mb-1 text-sm text-slate-600">
-              <span className="font-medium">{tableLabel}</span> uchun{' '}
-              <span className="font-semibold text-slate-900">
-                {order.final_amount.toLocaleString()} so'm
-              </span>{' '}
-              to'landi deb belgilanadi.
-            </p>
-            {order.telegram_username && (
-              <p className="mb-3 text-xs text-slate-400">Mijoz: @{order.telegram_username}</p>
-            )}
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={onCancel}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
-              >
-                Bekor qilish
-              </button>
-              <button
-                onClick={() => setStep(2)}
-                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-              >
-                Davom etish
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <h2 className="mb-2 text-lg font-semibold text-red-600">Haqiqatan ham tasdiqlaysizmi?</h2>
-            <p className="mb-4 text-sm text-slate-600">
-              <span className="font-medium">{tableLabel}</span> —{' '}
-              <span className="font-semibold">{order.final_amount.toLocaleString()} so'm</span>.
-              Bu amalni keyin bekor qilib bo'lmaydi. To'g'ri stolni tanlaganingizga ishonch hosil
-              qiling.
-            </p>
-            {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setStep(1)}
-                disabled={submitting}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-60"
-              >
-                Orqaga
-              </button>
-              <button
-                onClick={onConfirm}
-                disabled={submitting}
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
-              >
-                {submitting ? 'Saqlanmoqda...' : "Ha, to'landi"}
-              </button>
-            </div>
-          </>
-        )}
+    <ModalShell
+      title={screen === 'pay' ? t('pay.title') : title}
+      subtitle={screen === 'pay' ? title : subtitleParts.join(' · ')}
+      size="pos"
+      onBack={screen === 'pay' ? () => setScreen('main') : undefined}
+      onClose={onClose}
+    >
+      {screen === 'pay' && order ? (
+        <PaymentPanel
+          order={order}
+          label={title}
+          onBack={() => setScreen('main')}
+          onPaid={(message) => {
+            onReceiptStatus(message);
+            onChanged();
+            onClose();
+          }}
+        />
+      ) : order && order.status === 'new' ? (
+        <PendingApprovalPanel order={order} onChanged={onChanged} onClose={onClose} />
+      ) : (
+        <ActiveOrderPanel
+          table={table}
+          order={order}
+          onChanged={onChanged}
+          onPay={() => setScreen('pay')}
+          onReceiptStatus={onReceiptStatus}
+        />
+      )}
+    </ModalShell>
+  );
+}
+
+// Mijoz QR/Telegram orqali yuborgan, hali kassir tasdiqlamagan buyurtma
+function PendingApprovalPanel({
+  order,
+  onChanged,
+  onClose,
+}: {
+  order: ActiveOrder;
+  onChanged: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+
+  const acceptMutation = useMutation({
+    mutationFn: () => activateOrder(order.id),
+    onSuccess: onChanged,
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: (reason: string) => cancelOrder(order.id, reason),
+    onSuccess: () => {
+      onChanged();
+      onClose();
+    },
+  });
+
+  function handleReject() {
+    const reason = prompt(t('orders.rejectReason'));
+    if (reason) rejectMutation.mutate(reason);
+  }
+
+  return (
+    <>
+      <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5">
+        <OrderItemsList order={order} onChanged={onChanged} />
       </div>
+      <div className="flex gap-2 border-t border-slate-200 px-4 py-4 sm:px-5">
+        <button
+          onClick={handleReject}
+          disabled={rejectMutation.isPending}
+          className="flex-1 rounded-lg border border-red-200 px-4 py-3 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
+        >
+          {t('orders.reject')}
+        </button>
+        <button
+          onClick={() => acceptMutation.mutate()}
+          disabled={acceptMutation.isPending}
+          className="flex-1 rounded-lg bg-emerald-600 px-4 py-3 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+        >
+          {acceptMutation.isPending ? t('app.saving') : t('orders.accept')}
+        </button>
+      </div>
+    </>
+  );
+}
+
+function ActiveOrderPanel({
+  table,
+  order,
+  onChanged,
+  onPay,
+  onReceiptStatus,
+}: {
+  table?: Table;
+  order: ActiveOrder | undefined;
+  onChanged: () => void;
+  onPay: () => void;
+  onReceiptStatus: (message: string) => void;
+}) {
+  const { t } = useTranslation();
+  const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: listCategories });
+  const [selectedCategory, setSelectedCategory] = useState('');
+  // Barcha mahsulotlar bir marta olinadi va kategoriya bo'yicha shu yerda filtrlanadi —
+  // shunda kassir kategoriyalar orasida yurganda tanlangan taomlar ro'yxatdan yo'qolmaydi.
+  const { data: allProducts = [] } = useQuery({ queryKey: ['products'], queryFn: () => listProducts() });
+  const products = useMemo(
+    () =>
+      allProducts.filter(
+        (p) => p.is_available && (!selectedCategory || p.category_id === selectedCategory),
+      ),
+    [allProducts, selectedCategory],
+  );
+
+  const [draft, setDraft] = useState<Record<string, number>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [printing, setPrinting] = useState(false);
+
+  const draftLines = useMemo(
+    () =>
+      Object.entries(draft)
+        .filter(([, qty]) => qty > 0)
+        .map(([id, qty]) => ({ product: allProducts.find((p) => p.id === id), quantity: qty }))
+        .filter((l): l is { product: NonNullable<typeof l.product>; quantity: number } => !!l.product),
+    [draft, allProducts],
+  );
+  const draftTotal = draftLines.reduce((sum, l) => sum + l.product.price * l.quantity, 0);
+
+  const saveMutation = useMutation({
+    mutationFn: () => {
+      const items = Object.entries(draft)
+        .filter(([, qty]) => qty > 0)
+        .map(([product_id, quantity]) => ({ product_id, quantity }));
+      if (order) return addOrderItems(order.id, items);
+      if (!table) throw new Error('Stol tanlanmagan');
+      return createOrder(table.id, items);
+    },
+    onSuccess: () => {
+      setDraft({});
+      setError(null);
+      onChanged();
+    },
+    onError: (err: any) => setError(err?.response?.data?.error ?? t('app.error')),
+  });
+
+  const kitchenMutation = useMutation({
+    mutationFn: (status: 'preparing' | 'ready') => updateKitchenStatus(order!.id, status),
+    onSuccess: onChanged,
+  });
+
+  const discountMutation = useMutation({
+    mutationFn: ({ amount, reason }: { amount: number; reason: string }) =>
+      applyDiscount(order!.id, amount, reason),
+    onSuccess: onChanged,
+    onError: (err: any) => setError(err?.response?.data?.error ?? t('app.error')),
+  });
+
+  function changeQuantity(productId: string, delta: number) {
+    setDraft((d) => ({ ...d, [productId]: Math.max(0, (d[productId] ?? 0) + delta) }));
+  }
+
+  function handleDiscount() {
+    if (!order) return;
+    const raw = prompt(t('orders.discountAmount'), String(order.discount_amount || 0));
+    if (raw === null) return;
+    const amount = Number(raw);
+    if (Number.isNaN(amount) || amount < 0) return;
+    const reason = prompt(t('orders.discountReason')) ?? '';
+    discountMutation.mutate({ amount, reason });
+  }
+
+  async function handlePrint(preBill: boolean) {
+    if (!order) return;
+    setPrinting(true);
+    onReceiptStatus(await printReceiptFlow(order, preBill, t));
+    setPrinting(false);
+  }
+
+  return (
+    // Telefonda ustun (taomlar tepada, hisob pastda), kompyuterda ikki ustun.
+    <div className="flex flex-1 flex-col overflow-hidden lg:flex-row">
+      {table && (
+        <div className="flex min-h-0 flex-1 flex-col border-b border-slate-200 lg:border-b-0 lg:border-r">
+          <div className="shrink-0 px-4 pt-3 sm:px-5">
+            <div className="flex flex-wrap gap-1.5 pb-2">
+              <button
+                onClick={() => setSelectedCategory('')}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium ${
+                  selectedCategory === ''
+                    ? 'bg-indigo-600 text-white'
+                    : 'border border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                {t('orders.allCategories')}
+              </button>
+              {categories.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => setSelectedCategory(c.id)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-medium ${
+                    selectedCategory === c.id
+                      ? 'bg-indigo-600 text-white'
+                      : 'border border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {c.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Faqat shu ro'yxat siljiydi — oyna o'lchami kategoriya
+              almashganda o'zgarmaydi (ModalShell size="pos"). */}
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 sm:px-5">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+              {products.map((p) => (
+                <ProductPickCard
+                  key={p.id}
+                  product={p}
+                  quantity={draft[p.id] ?? 0}
+                  currency={t('app.currency')}
+                  onAdd={(id) => changeQuantity(id, 1)}
+                  onRemove={(id) => changeQuantity(id, -1)}
+                />
+              ))}
+            </div>
+            {products.length === 0 && (
+              <p className="py-8 text-center text-sm text-slate-400">{t('menu.noProducts')}</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className={`flex min-h-0 w-full flex-col ${table ? 'lg:w-80 xl:w-96' : ''}`}>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
+          <OrderItemsList order={order} onChanged={onChanged} />
+
+          {draftLines.length > 0 && (
+            <div className="mt-4 border-t border-dashed border-slate-200 pt-3">
+              <p className="mb-2 text-xs font-semibold text-indigo-600">{t('orders.selected')}</p>
+              {draftLines.map((l) => (
+                <div key={l.product.id} className="flex justify-between py-0.5 text-sm">
+                  <span className="text-slate-600">
+                    {l.product.name} × {l.quantity}
+                  </span>
+                  <span className="text-slate-900">
+                    {(l.product.price * l.quantity).toLocaleString()}
+                  </span>
+                </div>
+              ))}
+              <div className="mt-2 flex justify-between text-sm font-semibold">
+                <span>{t('orders.newItemsTotal')}</span>
+                <span>
+                  {draftTotal.toLocaleString()} {t('app.currency')}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {error && <p className="px-4 pb-2 text-sm text-red-600 sm:px-5">{error}</p>}
+
+        <div className="shrink-0 space-y-2 border-t border-slate-200 px-4 py-3 sm:px-5 sm:py-4">
+          {draftLines.length > 0 && (
+            <button
+              onClick={() => saveMutation.mutate()}
+              disabled={saveMutation.isPending}
+              className="w-full rounded-lg bg-indigo-600 px-4 py-3 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+            >
+              {saveMutation.isPending ? t('app.saving') : t('orders.saveItems')}
+            </button>
+          )}
+
+          {order && (
+            <>
+              <div className="flex gap-2">
+                <button
+                  onClick={() =>
+                    kitchenMutation.mutate(order.kitchen_status === 'ready' ? 'preparing' : 'ready')
+                  }
+                  disabled={kitchenMutation.isPending}
+                  className={`flex-1 rounded-lg px-3 py-2.5 text-sm font-medium disabled:opacity-60 ${
+                    order.kitchen_status === 'ready'
+                      ? 'border border-amber-300 text-amber-700 hover:bg-amber-50'
+                      : 'border border-emerald-300 text-emerald-700 hover:bg-emerald-50'
+                  }`}
+                >
+                  {order.kitchen_status === 'ready'
+                    ? t('orders.markPreparing')
+                    : t('orders.markReady')}
+                </button>
+                <button
+                  onClick={handleDiscount}
+                  disabled={discountMutation.isPending}
+                  className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+                >
+                  {t('orders.discount')}
+                </button>
+              </div>
+
+              {/* Chek to'lovdan mustaqil chiqariladi: hisob-faktura mijozga
+                  to'lovdan oldin beriladi (restoranda odatiy amaliyot). */}
+              <button
+                onClick={() => handlePrint(true)}
+                disabled={printing}
+                title={t('receipt.preBillHint')}
+                className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+              >
+                🧾 {printing ? t('receipt.printing') : t('receipt.preBill')}
+              </button>
+
+              <button
+                onClick={onPay}
+                className="w-full rounded-lg bg-emerald-600 px-4 py-3 text-sm font-medium text-white hover:bg-emerald-700"
+              >
+                {t('orders.pay')} · {order.final_amount.toLocaleString()} {t('app.currency')}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Joriy hisob — kassir har bir qatorni tahrirlashi yoki o'chirishi mumkin.
+// Mijoz tomonidan tahrirlash yo'q: shunda ikki tomondan bir vaqtda o'zgartirish nizosi bo'lmaydi.
+function OrderItemsList({
+  order,
+  onChanged,
+}: {
+  order: ActiveOrder | undefined;
+  onChanged: () => void;
+}) {
+  const { t } = useTranslation();
+
+  const updateMutation = useMutation({
+    mutationFn: ({ itemId, quantity }: { itemId: string; quantity: number }) =>
+      updateOrderItem(order!.id, itemId, quantity),
+    onSuccess: onChanged,
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (itemId: string) => deleteOrderItem(order!.id, itemId),
+    onSuccess: onChanged,
+  });
+
+  if (!order) {
+    return <p className="text-sm text-slate-400">{t('orders.noCurrentOrder')}</p>;
+  }
+
+  const isLastItem = order.items.length === 1;
+  const busy = updateMutation.isPending || deleteMutation.isPending;
+
+  function handleDelete(itemId: string) {
+    const message = isLastItem
+      ? `${t('orders.confirmRemoveItem')}\n\n${t('orders.lastItemWarning')}`
+      : t('orders.confirmRemoveItem');
+    if (confirm(message)) deleteMutation.mutate(itemId);
+  }
+
+  return (
+    <div>
+      <p className="mb-2 text-xs font-semibold text-slate-500">{t('orders.currentOrder')}</p>
+      <div className="space-y-1">
+        {order.items.map((item) => (
+          <div key={item.id} className="flex items-center justify-between gap-2 text-sm">
+            <span className="min-w-0 flex-1 truncate text-slate-600">{item.product_name}</span>
+            <div className="flex shrink-0 items-center gap-1">
+              <button
+                onClick={() =>
+                  item.quantity > 1
+                    ? updateMutation.mutate({ itemId: item.id, quantity: item.quantity - 1 })
+                    : handleDelete(item.id)
+                }
+                disabled={busy}
+                className="h-7 w-7 rounded-full border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              >
+                −
+              </button>
+              <span className="w-5 text-center text-xs font-medium">{item.quantity}</span>
+              <button
+                onClick={() => updateMutation.mutate({ itemId: item.id, quantity: item.quantity + 1 })}
+                disabled={busy}
+                className="h-7 w-7 rounded-full border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              >
+                +
+              </button>
+              <span className="w-20 text-right text-slate-900">
+                {(item.unit_price * item.quantity).toLocaleString()}
+              </span>
+              <button
+                onClick={() => handleDelete(item.id)}
+                disabled={busy}
+                title={t('orders.removeItem')}
+                className="rounded px-1 text-slate-300 hover:text-red-600 disabled:opacity-50"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {order.discount_amount > 0 && (
+        <div className="mt-2 flex justify-between text-sm text-amber-700">
+          <span>{t('orders.discount')}</span>
+          <span>−{order.discount_amount.toLocaleString()}</span>
+        </div>
+      )}
+
+      <div className="mt-2 flex justify-between border-t border-slate-200 pt-2 text-sm font-semibold">
+        <span>{t('orders.orderTotal')}</span>
+        <span>
+          {order.final_amount.toLocaleString()} {t('app.currency')}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// To'lov: usul tanlash → yakuniy tasdiq. Xato bilan noto'g'ri hisobni to'langan deb
+// belgilashning oldini olish uchun ikki bosqichda tasdiqlanadi.
+function PaymentPanel({
+  order,
+  label,
+  onBack,
+  onPaid,
+}: {
+  order: ActiveOrder;
+  label: string;
+  onBack: () => void;
+  onPaid: (receiptMessage: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [step, setStep] = useState<1 | 2>(1);
+  const [method, setMethod] = useState<PaymentMethod>('cash');
+  const [cardType, setCardType] = useState<CardType>('uzcard');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function confirm() {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await payOrder(order.id, [
+        {
+          method,
+          card_type: method === 'card' ? cardType : undefined,
+          amount: order.final_amount,
+        },
+      ]);
+
+      // To'lov saqlandi. Chek bosqichidagi xatolar to'lovni bekor qilmaydi,
+      // faqat kassirga xabar qilinadi.
+      onPaid(`${label}: ${await printReceiptFlow(order, false, t)}`);
+    } catch (err: any) {
+      setError(err?.response?.data?.error ?? t('pay.failed'));
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="overflow-y-auto px-4 py-5 sm:px-5">
+      {step === 1 ? (
+        <>
+          <p className="mb-4 text-sm text-slate-600">
+            <span className="font-medium">{label}</span> —{' '}
+            <span className="font-semibold text-slate-900">
+              {order.final_amount.toLocaleString()} {t('app.currency')}
+            </span>{' '}
+            {t('pay.amountNote')}
+          </p>
+
+          <p className="mb-2 text-xs font-medium text-slate-600">{t('pay.method')}</p>
+          <div className="mb-4 flex gap-2">
+            {(['cash', 'card', 'transfer'] as PaymentMethod[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMethod(m)}
+                className={`flex-1 rounded-lg px-3 py-3 text-sm font-medium ${
+                  method === m
+                    ? 'bg-indigo-600 text-white'
+                    : 'border border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                {t(`pay.method.${m}` as TranslationKey)}
+              </button>
+            ))}
+          </div>
+
+          {method === 'card' && (
+            <>
+              <p className="mb-2 text-xs font-medium text-slate-600">{t('pay.cardType')}</p>
+              <div className="mb-4 flex flex-wrap gap-2">
+                {CARD_TYPES.map((ct) => (
+                  <button
+                    key={ct}
+                    onClick={() => setCardType(ct)}
+                    className={`rounded-lg px-3 py-2 text-sm capitalize ${
+                      cardType === ct
+                        ? 'bg-slate-800 text-white'
+                        : 'border border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {ct}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={onBack}
+              className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-600 hover:bg-slate-50"
+            >
+              {t('app.cancel')}
+            </button>
+            <button
+              onClick={() => setStep(2)}
+              className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700"
+            >
+              {t('app.continue')}
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <h3 className="mb-2 text-lg font-semibold text-red-600">{t('pay.confirmTitle')}</h3>
+          <p className="mb-4 text-sm text-slate-600">
+            <span className="font-medium">{label}</span> —{' '}
+            <span className="font-semibold">
+              {order.final_amount.toLocaleString()} {t('app.currency')}
+            </span>{' '}
+            ({t(`pay.method.${method}` as TranslationKey)}
+            {method === 'card' ? ` · ${cardType}` : ''}). {t('pay.confirmWarning')}
+          </p>
+          {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setStep(1)}
+              disabled={submitting}
+              className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+            >
+              {t('app.back')}
+            </button>
+            <button
+              onClick={confirm}
+              disabled={submitting}
+              className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+            >
+              {submitting ? t('app.saving') : t('pay.confirmYes')}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

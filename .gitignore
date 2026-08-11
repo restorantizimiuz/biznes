@@ -1,8 +1,13 @@
-# Go
+# Go — kompilyatsiya natijalari (har bir mustaqil modul uchun)
 backend/server
 backend/*.exe
 backend/vendor/
 backend/.redis-portable/
+telegram-bot/*.exe
+printer-helper/*.exe
+
+# Yuklangan mahsulot rasmlari (foydalanuvchi ma'lumoti, kodga tegishli emas)
+backend/uploads/
 
 # Env fayllar (maxfiy ma'lumotlar)
 .env

@@ -15,13 +15,28 @@ type Config struct {
 	RedisAddr        string
 	RedisPassword    string
 	JWTSecret        string
-	Environment      string // "development" yoki "production"
-	TelegramBotToken string // WebApp initData'ni tekshirish va chek yuborish uchun
+	// PlatformJWTSecret - super-admin (platforma) tokenlari uchun **alohida**
+	// kalit. Kafe tokeni platforma API'sida va aksincha ishlamasligi shu
+	// ajratishga bog'liq: kalit bir xil bo'lsa, tokenlarni almashtirib
+	// ishlatish imkoni paydo bo'lardi.
+	PlatformJWTSecret string
+	Environment       string // "development" yoki "production"
+	TelegramBotToken  string // WebApp initData'ni tekshirish va chek yuborish uchun
+	UploadDir         string // mahsulot rasmlari saqlanadigan papka
+	// AllowedOrigins - CORS uchun ruxsat etilgan domenlar (vergul bilan).
+	// Productionda kassa, Telegram WebApp va super-admin manzillari yoziladi.
+	AllowedOrigins string
+	// SeedDemo - namunaviy "Demo Cafe" ma'lumotlarini qo'yishmi.
+	// Ishlab chiqarish bazasida bu **hech qachon** yoqilmasligi kerak:
+	// demo hisobning paroli hammaga ma'lum.
+	SeedDemo bool
 }
 
 // defaultJWTSecret - faqat lokal ishlab chiqish uchun mo'ljallangan namunaviy kalit.
 // Productionda bu qiymat bilan qolib ketmasligi kerak.
 const defaultJWTSecret = "o-zgartiring-bu-maxfiy-kalit"
+
+const defaultPlatformJWTSecret = "o-zgartiring-bu-platforma-kaliti"
 
 // Load .env fayldan yoki muhit o'zgaruvchilaridan sozlamalarni o'qiydi
 func Load() *Config {
@@ -36,13 +51,23 @@ func Load() *Config {
 		RedisURL:         getEnv("REDIS_URL", ""),
 		RedisAddr:        getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisPassword:    getEnv("REDIS_PASSWORD", ""),
-		JWTSecret:        getEnv("JWT_SECRET", defaultJWTSecret),
-		Environment:      getEnv("ENVIRONMENT", "development"),
-		TelegramBotToken: getEnv("TELEGRAM_BOT_TOKEN", ""),
+		JWTSecret:         getEnv("JWT_SECRET", defaultJWTSecret),
+		PlatformJWTSecret: getEnv("PLATFORM_JWT_SECRET", defaultPlatformJWTSecret),
+		Environment:       getEnv("ENVIRONMENT", "development"),
+		TelegramBotToken:  getEnv("TELEGRAM_BOT_TOKEN", ""),
+		UploadDir:         getEnv("UPLOAD_DIR", "./uploads"),
+		AllowedOrigins:    getEnv("ALLOWED_ORIGINS", "*"),
+		SeedDemo:          getEnv("SEED_DEMO", "") == "true",
 	}
 
 	if cfg.Environment == "production" && cfg.JWTSecret == defaultJWTSecret {
 		log.Fatal("JWT_SECRET productionda standart (namunaviy) qiymatda qoldirilishi mumkin emas — uni muhit o'zgaruvchisi orqali o'zgartiring")
+	}
+	if cfg.Environment == "production" && cfg.PlatformJWTSecret == defaultPlatformJWTSecret {
+		log.Fatal("PLATFORM_JWT_SECRET productionda standart qiymatda qoldirilishi mumkin emas — super-admin paneli shu kalit bilan himoyalanadi")
+	}
+	if cfg.PlatformJWTSecret == cfg.JWTSecret {
+		log.Fatal("PLATFORM_JWT_SECRET va JWT_SECRET bir xil bo'lishi mumkin emas — aks holda kafe tokeni super-admin API'sida ham ishlab ketardi")
 	}
 	if cfg.TelegramBotToken == "" {
 		log.Println("OGOHLANTIRISH: TELEGRAM_BOT_TOKEN sozlanmagan — Telegram WebApp orqali buyurtma va chek yuborish ishlamaydi")

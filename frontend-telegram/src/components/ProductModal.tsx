@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Product } from '../types';
 import { formatMoney } from '../utils/format';
+import { resolveImageUrl } from '../api';
 import QuantityControl from './QuantityControl';
 
 // Mahsulot bosilganda ochiladigan mobile-friendly bottom sheet. Stepper mahalliy
@@ -19,7 +20,8 @@ export default function ProductModal({
 }) {
   const [pending, setPending] = useState(Math.max(cartQuantity, 1));
   const [imgFailed, setImgFailed] = useState(false);
-  const showImage = Boolean(product.image_url) && !imgFailed;
+  const imageSrc = resolveImageUrl(product.image_url);
+  const showImage = Boolean(imageSrc) && !imgFailed;
 
   useEffect(() => {
     document.body.style.overflow = 'hidden';
@@ -40,7 +42,7 @@ export default function ProductModal({
         <div className="relative aspect-[4/3] w-full shrink-0 overflow-hidden bg-[var(--color-border)]">
           {showImage ? (
             <img
-              src={product.image_url}
+              src={imageSrc}
               alt={product.name}
               className="h-full w-full object-cover"
               onError={() => setImgFailed(true)}

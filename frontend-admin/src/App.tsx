@@ -1,6 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './auth/AuthContext';
+import { LanguageProvider } from './i18n/LanguageContext';
+import { NotificationsProvider } from './notifications/useOrderNotifications';
 import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
 import LoginPage from './pages/LoginPage';
@@ -21,7 +23,19 @@ function App() {
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route element={<ProtectedRoute />}>
-              <Route element={<Layout />}>
+              {/* LanguageProvider aynan shu yerda — u kafe sozlamalarini so'raydi,
+                  demak avval login bo'lgan bo'lishi kerak (LoginPage undan tashqarida).
+                  NotificationsProvider ham shu yerda: u ovoz sozlamasini o'sha
+                  ['settings'] so'rovidan oladi va WebSocket uchun token kerak. */}
+              <Route
+                element={
+                  <LanguageProvider>
+                    <NotificationsProvider>
+                      <Layout />
+                    </NotificationsProvider>
+                  </LanguageProvider>
+                }
+              >
                 <Route path="/" element={<OrdersPage />} />
                 <Route path="/menu" element={<MenuPage />} />
                 <Route path="/tables" element={<TablesPage />} />
