@@ -45,7 +45,7 @@ export default function StaffPage() {
           {staff.map((s) => (
             <div
               key={s.id}
-              className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+              className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
             >
               <div>
                 <p className="text-sm font-medium text-slate-900">{s.full_name || s.login}</p>
@@ -74,14 +74,14 @@ export default function StaffPage() {
             </div>
           ))}
           {staff.length === 0 && (
-            <p className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">
+            <p className="rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">
               {t('staff.noStaff')}
             </p>
           )}
         </div>
 
         {canManage && (
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <h2 className="mb-3 text-sm font-semibold text-slate-700">{t('staff.newStaff')}</h2>
             <form onSubmit={handleSubmit} className="space-y-3">
               <input

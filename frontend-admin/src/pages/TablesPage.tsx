@@ -207,7 +207,7 @@ export default function TablesPage() {
         {tables.map((table) => (
           <div
             key={table.id}
-            className="rounded-xl border border-slate-200 bg-white p-4 text-center shadow-sm"
+            className="rounded-2xl border border-slate-200 bg-white p-4 text-center shadow-sm"
           >
             <p className="mb-2 font-medium text-slate-900">{table.name}</p>
             <span
@@ -245,7 +245,7 @@ export default function TablesPage() {
           </div>
         ))}
         {floorId && tables.length === 0 && (
-          <p className="col-span-full rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">
+          <p className="col-span-full rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">
             {t('tables.noTables')}
           </p>
         )}
@@ -257,7 +257,7 @@ export default function TablesPage() {
           onClick={() => setQrInfo(null)}
         >
           <div
-            className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-lg"
+            className="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-lg"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="mb-3 text-lg font-semibold text-slate-900">{qrInfo.tableName}</h2>

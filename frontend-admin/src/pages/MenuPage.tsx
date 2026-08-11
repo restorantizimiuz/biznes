@@ -105,7 +105,7 @@ export default function MenuPage() {
       <h1 className="mb-6 text-xl font-semibold text-slate-900">{t('menu.title')}</h1>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm lg:col-span-1">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:col-span-1">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">{t('menu.categories')}</h2>
           <ul className="mb-4 space-y-1">
             <li>
@@ -166,7 +166,7 @@ export default function MenuPage() {
         </div>
 
         <div className="lg:col-span-2">
-          <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <h2 className="mb-3 text-sm font-semibold text-slate-700">{t('menu.newProduct')}</h2>
             <form onSubmit={handleAddProduct} className="grid grid-cols-1 gap-3 sm:grid-cols-4">
               <input
@@ -207,7 +207,7 @@ export default function MenuPage() {
             {products.map((p) => (
               <div
                 key={p.id}
-                className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+                className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
               >
                 <div className="flex min-w-0 items-center gap-3">
                   <ProductThumb product={p} />
@@ -245,7 +245,7 @@ export default function MenuPage() {
               </div>
             ))}
             {products.length === 0 && (
-              <p className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">
+              <p className="rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">
                 {t('menu.noProducts')}
               </p>
             )}

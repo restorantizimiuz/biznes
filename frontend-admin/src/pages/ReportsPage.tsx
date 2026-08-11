@@ -89,7 +89,7 @@ export default function ReportsPage() {
       </h1>
 
       {/* Filtrlar ham ekranga, ham Excel yuklashga bir xil qo'llanadi */}
-      <div className="mb-5 space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mb-5 space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-end gap-3">
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-slate-600">{t('reports.from')}</span>
@@ -269,7 +269,7 @@ function StatCard({
 }) {
   return (
     <div
-      className={`rounded-xl border p-3 shadow-sm ${
+      className={`rounded-2xl border p-3 shadow-sm ${
         highlight ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-white'
       }`}
     >
@@ -292,14 +292,14 @@ function OrdersTable({
 
   if (orders.length === 0) {
     return (
-      <p className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">
+      <p className="rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">
         {t('reports.noOrders')}
       </p>
     );
   }
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
       <table className="w-full min-w-[880px] text-sm">
         <thead className="bg-slate-50 text-left text-xs text-slate-500">
           <tr>
@@ -368,14 +368,14 @@ function ActivityList({ activity }: { activity: ReportActivity[] }) {
 
   if (activity.length === 0) {
     return (
-      <p className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">
+      <p className="rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">
         {t('reports.noActivity')}
       </p>
     );
   }
 
   return (
-    <div className="max-h-[420px] overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div className="max-h-[420px] overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
       <ul className="divide-y divide-slate-100">
         {activity.map((entry) => (
           <li key={entry.id} className="flex gap-3 px-3 py-2 text-sm">

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import {
   activateOrder,
   addOrderItems,
@@ -7,6 +8,7 @@ import {
   cancelOrder,
   createOrder,
   deleteOrderItem,
+  getDailySummary,
   getReceipt,
   listActiveOrders,
   listCategories,
@@ -59,9 +61,49 @@ const ORDER_TYPE_EMOJI: Record<string, string> = {
 // juda kam so'rash esa uzilishni kech ko'rsatadi.
 const PRINTER_HEALTH_INTERVAL_MS = 30000;
 
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function StatCard({
+  icon,
+  title,
+  value,
+  hint,
+  highlight,
+}: {
+  icon: string;
+  title: string;
+  value: string;
+  hint: string;
+  highlight?: boolean;
+}) {
+  return (
+    <div
+      className={`rounded-2xl border p-4 shadow-sm ${
+        highlight ? 'border-indigo-200 bg-indigo-50/60' : 'border-slate-200 bg-white'
+      }`}
+    >
+      <div className="mb-2 flex items-center gap-2">
+        <span
+          className={`flex h-8 w-8 items-center justify-center rounded-lg text-sm ${
+            highlight ? 'bg-indigo-100' : 'bg-slate-100'
+          }`}
+        >
+          {icon}
+        </span>
+        <p className="text-xs font-medium text-slate-500">{title}</p>
+      </div>
+      <p className="text-xl font-semibold text-slate-900 sm:text-2xl">{value}</p>
+      <p className="mt-0.5 text-xs text-slate-400">{hint}</p>
+    </div>
+  );
+}
+
 export default function OrdersPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const { focusOrderId, clearFocus } = useOrderNotifications();
 
   const { data: floors = [] } = useQuery({ queryKey: ['floors'], queryFn: listFloors });
@@ -90,11 +132,28 @@ export default function OrdersPage() {
     refetchInterval: PRINTER_HEALTH_INTERVAL_MS,
   });
 
+  // Bugungi umumiy son/daromad — hozir ochiq bo'lmagan (allaqachon to'langan)
+  // buyurtmalarni ham hisobga oladi, shuning uchun alohida kunlik hisobotdan olinadi.
+  const { data: dailySummary } = useQuery({
+    queryKey: ['daily-summary', 'today'],
+    queryFn: () => getDailySummary(todayISO(), todayISO()),
+    refetchInterval: 30000,
+  });
+
   const ordersByTable = useMemo(() => {
     const map: Record<string, ActiveOrder> = {};
     for (const o of orders) if (o.table_id) map[o.table_id] = o;
     return map;
   }, [orders]);
+
+  const preparingCount = useMemo(
+    () => orders.filter((o) => o.status !== 'new' && o.kitchen_status === 'preparing').length,
+    [orders],
+  );
+  const readyCount = useMemo(
+    () => orders.filter((o) => o.kitchen_status === 'ready').length,
+    [orders],
+  );
 
   const onlineOrders = useMemo(() => orders.filter((o) => !o.table_id), [orders]);
   const newOnlineCount = onlineOrders.filter((o) => o.status === 'new').length;
@@ -146,6 +205,34 @@ export default function OrdersPage() {
         >
           🖨️ {printerOnline ? t('receipt.printerOnline') : t('receipt.printerOffline')}
         </span>
+      </div>
+
+      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          icon="🧾"
+          title={t('orders.stat.todayOrders')}
+          value={String(dailySummary?.total_orders ?? 0)}
+          hint={t('orders.stat.todayOrdersHint')}
+        />
+        <StatCard
+          icon="🔥"
+          title={t('orders.preparing')}
+          value={String(preparingCount)}
+          hint={t('orders.stat.preparingHint')}
+        />
+        <StatCard
+          icon="✅"
+          title={t('orders.ready')}
+          value={String(readyCount)}
+          hint={t('orders.stat.readyHint')}
+        />
+        <StatCard
+          icon="💰"
+          title={t('orders.stat.revenue')}
+          value={`${(dailySummary?.total_revenue ?? 0).toLocaleString()} ${t('app.currency')}`}
+          hint={t('orders.stat.revenueHint')}
+          highlight
+        />
       </div>
 
       {receiptStatus && (
@@ -225,9 +312,23 @@ export default function OrdersPage() {
           )}
         </div>
       ) : floors.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">
-          {t('orders.noFloors')}
-        </p>
+        <div className="mx-auto flex max-w-md flex-col items-center rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-10 text-center sm:px-10 sm:py-14">
+          <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-50 text-3xl">
+            🪑
+          </div>
+          <h2 className="text-base font-semibold text-slate-900 sm:text-lg">
+            {t('orders.emptyFloorsTitle')}
+          </h2>
+          <p className="mt-2 whitespace-pre-line text-sm text-slate-500">
+            {t('orders.emptyFloorsText')}
+          </p>
+          <button
+            onClick={() => navigate('/tables')}
+            className="mt-6 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 px-5 py-3 text-sm font-medium text-white shadow-sm transition hover:from-indigo-700 hover:to-indigo-600 sm:w-auto"
+          >
+            {t('orders.goToTables')}
+          </button>
+        </div>
       ) : (
         // Telefonda 2 ustun, planshetda 3, kompyuterda 4-5 — stol katakchalari
         // barmoq bilan bosiladigan o'lchamda qoladi.

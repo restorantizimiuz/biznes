@@ -46,7 +46,7 @@ export default function ModalShell({
   return (
     <div className="fixed inset-0 z-30 flex items-stretch justify-center bg-black/40 sm:items-center sm:p-4">
       <div
-        className={`flex h-full w-full flex-col overflow-hidden bg-white shadow-lg sm:rounded-xl ${SIZE_CLASSES[size]}`}
+        className={`flex h-full w-full flex-col overflow-hidden bg-white shadow-lg sm:rounded-2xl ${SIZE_CLASSES[size]}`}
       >
         <div className="flex shrink-0 items-center gap-3 border-b border-slate-200 px-4 py-3 sm:px-5 sm:py-4">
           {onBack && (

@@ -1,10 +1,47 @@
 @import "tailwindcss";
 
+/*
+ * Butun ilova "indigo-*" Tailwind klasslaridan foydalanadi (bg-indigo-600,
+ * text-indigo-700 va h.k.). Har bir faylni qayta yozish o'rniga shu rang
+ * palitrasi shu yerda binafsha (violet) qiymatlarga almashtiriladi — natijada
+ * asosiy rang butun ilova bo'ylab bitta joydan boshqariladi, funksional
+ * className'lar (JS mantiqiga bog'liq bo'lganlar) esa o'zgarishsiz qoladi.
+ */
+@theme {
+  --color-indigo-50: #f5f3ff;
+  --color-indigo-100: #ede9fe;
+  --color-indigo-200: #ddd6fe;
+  --color-indigo-300: #c4b5fd;
+  --color-indigo-400: #a78bfa;
+  --color-indigo-500: #8b5cf6;
+  --color-indigo-600: #7c3aed;
+  --color-indigo-700: #6d28d9;
+  --color-indigo-800: #5b21b6;
+  --color-indigo-900: #4c1d95;
+  --color-indigo-950: #2e1065;
+}
+
 html, body, #root {
   height: 100%;
 }
 
 body {
   margin: 0;
-  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  background: #f8fafc;
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Mobil yon panel (drawer) ochilish animatsiyasi */
+@keyframes drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.animate-drawer-in {
+  animation: drawer-in 0.2s ease-out;
 }

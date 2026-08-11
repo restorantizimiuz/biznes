@@ -85,7 +85,7 @@ export default function SettingsPage() {
       )}
 
       {/* --- Kafe --- */}
-      <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <label className="block">
           <span className="mb-1 block text-xs font-medium text-slate-600">
             {t('settings.cafeName')}
@@ -116,7 +116,7 @@ export default function SettingsPage() {
       </section>
 
       {/* --- Chek printeri --- */}
-      <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-sm font-semibold text-slate-800">{t('settings.printer')}</h2>
 
         <label className="block">
@@ -176,7 +176,7 @@ export default function SettingsPage() {
       </section>
 
       {/* --- Bildirishnomalar --- */}
-      <section className="space-y-2 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <section className="space-y-2 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-sm font-semibold text-slate-800">{t('settings.notifications')}</h2>
         <label className="flex items-center gap-3 text-sm text-slate-700">
           <input
@@ -199,7 +199,7 @@ export default function SettingsPage() {
       </button>
 
       {/* --- Obuna --- */}
-      <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-sm font-semibold text-slate-800">{t('settings.subscription')}</h2>
         <p className="text-xs text-slate-500">
           {t('settings.currentPlan')}:{' '}
