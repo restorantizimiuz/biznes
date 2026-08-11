@@ -86,6 +86,9 @@ func RegisterRoutes(app *fiber.App, db *pgxpool.Pool, rdb *redis.Client, hub *no
 	platformGroup.Patch("/businesses/:id", platform.UpdateBusiness)
 	platformGroup.Post("/businesses/:id/subscription", platform.SetSubscription)
 	platformGroup.Post("/businesses/:id/features", platform.SetFeature)
+	platformGroup.Get("/users", platform.ListUsers)
+	platformGroup.Get("/staff", platform.ListStaff)
+	platformGroup.Get("/audit-logs", platform.ListAuditLogs)
 
 	// ---------- Himoyalangan yo'llar (kafe tokeni talab qilinadi) ----------
 	protected := api.Group("/", middleware.AuthRequired(cfg.JWTSecret))

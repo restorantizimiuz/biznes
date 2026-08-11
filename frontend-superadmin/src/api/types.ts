@@ -72,3 +72,62 @@ export const PLAN_LABELS: Record<SubscriptionPlan, string> = {
   qr: 'QR menyu',
   full: "To'liq",
 };
+
+/** GET /platform/users va /platform/staff — bir xil javob shakli. */
+export interface PlatformUser {
+  id: string;
+  business_id: string;
+  business_name: string;
+  full_name: string;
+  login: string;
+  role: string;
+  is_active: boolean;
+  created_at: string;
+  last_activity_at: string | null;
+}
+
+export interface PlatformUsersResponse {
+  users: PlatformUser[];
+  limit: number;
+  offset: number;
+}
+
+export const ROLE_LABELS: Record<string, string> = {
+  owner: 'Egasi',
+  admin: 'Admin',
+  cashier: 'Kassir',
+  waiter: 'Ofitsiant',
+};
+
+/** GET /platform/audit-logs */
+export interface PlatformAuditEntry {
+  id: string;
+  created_at: string;
+  business_id: string;
+  business_name: string;
+  action: string;
+  actor: string;
+  order_id: string | null;
+  details: Record<string, unknown> | null;
+}
+
+export interface PlatformAuditResponse {
+  entries: PlatformAuditEntry[];
+  limit: number;
+  offset: number;
+}
+
+// Backenddagi handlers/audit.go'dagi audit konstantalari bilan bir xil ro'yxat.
+export const AUDIT_ACTION_LABELS: Record<string, string> = {
+  order_created: 'Buyurtma yaratildi',
+  order_activated: 'Buyurtma qabul qilindi',
+  item_added: "Taom qo'shildi",
+  item_removed: "Taom o'chirildi",
+  item_qty_changed: "Miqdor o'zgartirildi",
+  discount_applied: 'Chegirma berildi',
+  order_paid: "To'landi",
+  order_cancelled: 'Bekor qilindi',
+  kitchen_status_changed: "Oshxona holati o'zgardi",
+  order_edited_after_close: 'Yopilgandan keyin tahrirlandi',
+  receipt_printed: 'Chek chiqarildi',
+};

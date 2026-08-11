@@ -8,6 +8,8 @@ import DashboardPage from './pages/DashboardPage';
 import BusinessesPage from './pages/BusinessesPage';
 import SubscriptionsPage from './pages/SubscriptionsPage';
 import FeatureFlagsPage from './pages/FeatureFlagsPage';
+import UsersPage from './pages/UsersPage';
+import AuditLogPage from './pages/AuditLogPage';
 import ComingSoonPage from './pages/ComingSoonPage';
 
 const queryClient = new QueryClient();
@@ -25,18 +27,12 @@ function App() {
                 <Route path="/kafelar" element={<BusinessesPage />} />
                 <Route path="/obunalar" element={<SubscriptionsPage />} />
                 <Route path="/feature-flags" element={<FeatureFlagsPage />} />
-                {/* Platforma darajasida hali backend endpointi yo'q bo'limlar —
-                    tekshirib.ber tahlilida aniqlangan: users/staff/audit/settings
-                    uchun /api/v1/platform/* guruhida route mavjud emas. */}
-                <Route
-                  path="/foydalanuvchilar"
-                  element={<ComingSoonPage icon="👥" title="Foydalanuvchilar" />}
-                />
-                <Route
-                  path="/xodimlar"
-                  element={<ComingSoonPage icon="👨‍💼" title="Xodimlar" />}
-                />
-                <Route path="/audit" element={<ComingSoonPage icon="📋" title="Audit jurnali" />} />
+                <Route path="/foydalanuvchilar" element={<UsersPage mode="all" />} />
+                <Route path="/xodimlar" element={<UsersPage mode="staff" />} />
+                <Route path="/audit" element={<AuditLogPage />} />
+                {/* Platform sozlamalari uchun DB'da hech qanday storage (jadval/model)
+                    mavjud emas — audit shu tarzda topildi, yangi migratsiya
+                    yaratilmadi (tasdiqlanmagunicha). */}
                 <Route
                   path="/sozlamalar"
                   element={<ComingSoonPage icon="⚙️" title="Platforma sozlamalari" />}

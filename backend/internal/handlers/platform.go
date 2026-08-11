@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -415,4 +416,196 @@ func (h *PlatformHandler) Stats(c *fiber.Ctx) error {
 		"orders_today":      ordersToday,
 		"revenue_today":     revenueToday,
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Foydalanuvchilar (barcha kafelar bo'yicha)
+// ---------------------------------------------------------------------------
+
+type platformUser struct {
+	ID             string     `json:"id"`
+	BusinessID     string     `json:"business_id"`
+	BusinessName   string     `json:"business_name"`
+	FullName       string     `json:"full_name"`
+	Login          string     `json:"login"`
+	Role           string     `json:"role"`
+	IsActive       bool       `json:"is_active"`
+	CreatedAt      time.Time  `json:"created_at"`
+	LastActivityAt *time.Time `json:"last_activity_at"`
+}
+
+const (
+	platformListLimitDefault = 100
+	platformListLimitMax     = 500
+)
+
+// listUsers - ListUsers va ListStaff bir xil manbadan (users jadvali) o'qiydi,
+// faqat standart rol filtri bilan farqlanadi — shuning uchun SQL bitta joyda.
+// `users` jadvalida alohida "staff" jadval yo'q: kassir/ofitsiant ham shu
+// jadvalda role ustuni bilan saqlanadi (backend/migrations/001_init_schema.sql).
+func (h *PlatformHandler) listUsers(c *fiber.Ctx, defaultRoles []string) error {
+	ctx := context.Background()
+
+	limit := c.QueryInt("limit", platformListLimitDefault)
+	if limit <= 0 || limit > platformListLimitMax {
+		limit = platformListLimitDefault
+	}
+	offset := c.QueryInt("offset", 0)
+	if offset < 0 {
+		offset = 0
+	}
+
+	var args []any
+	var where []string
+
+	if businessID := c.Query("business_id"); businessID != "" {
+		args = append(args, businessID)
+		where = append(where, fmt.Sprintf("u.business_id = $%d", len(args)))
+	}
+
+	roles := defaultRoles
+	if roleParam := c.Query("role"); roleParam != "" {
+		roles = strings.Split(roleParam, ",")
+	}
+	if len(roles) > 0 {
+		args = append(args, roles)
+		where = append(where, fmt.Sprintf("u.role::text = ANY($%d)", len(args)))
+	}
+
+	switch c.Query("status") {
+	case "active":
+		where = append(where, "u.is_active = true")
+	case "inactive":
+		where = append(where, "u.is_active = false")
+	}
+
+	whereSQL := ""
+	if len(where) > 0 {
+		whereSQL = "WHERE " + strings.Join(where, " AND ")
+	}
+
+	args = append(args, limit, offset)
+	query := fmt.Sprintf(`
+		SELECT u.id, u.business_id, b.name, u.full_name, u.login, u.role::text, u.is_active, u.created_at,
+		       (SELECT max(o.created_at) FROM orders o WHERE o.created_by_user_id = u.id)
+		FROM users u
+		JOIN businesses b ON b.id = u.business_id
+		%s
+		ORDER BY u.created_at DESC
+		LIMIT $%d OFFSET $%d`, whereSQL, len(args)-1, len(args))
+
+	rows, err := h.DB.Query(ctx, query, args...)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	defer rows.Close()
+
+	users := []platformUser{}
+	for rows.Next() {
+		var u platformUser
+		if err := rows.Scan(&u.ID, &u.BusinessID, &u.BusinessName, &u.FullName, &u.Login,
+			&u.Role, &u.IsActive, &u.CreatedAt, &u.LastActivityAt); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		users = append(users, u)
+	}
+	if err := rows.Err(); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{"users": users, "limit": limit, "offset": offset})
+}
+
+// ListUsers - platformadagi barcha foydalanuvchilar (istalgan rol).
+// Filtrlar: ?business_id=, ?role=cashier,waiter, ?status=active|inactive,
+// sahifalash: ?limit=&offset=.
+func (h *PlatformHandler) ListUsers(c *fiber.Ctx) error {
+	return h.listUsers(c, nil)
+}
+
+// ListStaff - platformadagi xizmat ko'rsatuvchi xodimlar (kassir/ofitsiant).
+// ListUsers bilan bir xil so'rovni ishlatadi, standart rol filtri bilan —
+// ?role= ko'rsatilsa o'sha ustunlik qiladi.
+func (h *PlatformHandler) ListStaff(c *fiber.Ctx) error {
+	return h.listUsers(c, []string{"cashier", "waiter"})
+}
+
+// ---------------------------------------------------------------------------
+// Audit jurnali (barcha kafelar bo'yicha)
+// ---------------------------------------------------------------------------
+
+type platformAuditEntry struct {
+	ID           string         `json:"id"`
+	CreatedAt    time.Time      `json:"created_at"`
+	BusinessID   string         `json:"business_id"`
+	BusinessName string         `json:"business_name"`
+	Action       string         `json:"action"`
+	Actor        string         `json:"actor"`
+	OrderID      *string        `json:"order_id"`
+	Details      map[string]any `json:"details"`
+}
+
+// ListAuditLogs - barcha kafelar bo'yicha audit jurnali. Mavjud `audit_log`
+// jadvalidan o'qiydi (yozish uchun handlers/audit.go'dagi writeAudit() dan
+// foydalaniladi, u shu yerda o'zgartirilmaydi) — reports.go'dagi
+// fetchActivity bilan bir xil SQL uslubida, faqat business_id filtri yo'q.
+// Filtrlar: ?business_id=, ?action=, sahifalash: ?limit=&offset=.
+func (h *PlatformHandler) ListAuditLogs(c *fiber.Ctx) error {
+	ctx := context.Background()
+
+	limit := c.QueryInt("limit", platformListLimitDefault)
+	if limit <= 0 || limit > platformListLimitMax {
+		limit = platformListLimitDefault
+	}
+	offset := c.QueryInt("offset", 0)
+	if offset < 0 {
+		offset = 0
+	}
+
+	var args []any
+	var where []string
+	if businessID := c.Query("business_id"); businessID != "" {
+		args = append(args, businessID)
+		where = append(where, fmt.Sprintf("al.business_id = $%d", len(args)))
+	}
+	if action := c.Query("action"); action != "" {
+		args = append(args, action)
+		where = append(where, fmt.Sprintf("al.action = $%d", len(args)))
+	}
+	whereSQL := ""
+	if len(where) > 0 {
+		whereSQL = "WHERE " + strings.Join(where, " AND ")
+	}
+
+	args = append(args, limit, offset)
+	query := fmt.Sprintf(`
+		SELECT al.id, al.created_at, al.business_id, b.name, al.action,
+		       COALESCE(u.full_name, al.actor_label, ''), al.order_id, al.details
+		FROM audit_log al
+		JOIN businesses b ON b.id = al.business_id
+		LEFT JOIN users u ON u.id = al.user_id
+		%s
+		ORDER BY al.created_at DESC
+		LIMIT $%d OFFSET $%d`, whereSQL, len(args)-1, len(args))
+
+	rows, err := h.DB.Query(ctx, query, args...)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	defer rows.Close()
+
+	entries := []platformAuditEntry{}
+	for rows.Next() {
+		var e platformAuditEntry
+		if err := rows.Scan(&e.ID, &e.CreatedAt, &e.BusinessID, &e.BusinessName, &e.Action,
+			&e.Actor, &e.OrderID, &e.Details); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{"entries": entries, "limit": limit, "offset": offset})
 }

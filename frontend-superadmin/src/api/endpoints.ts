@@ -2,8 +2,10 @@ import apiClient from './client';
 import type {
   Business,
   CreateBusinessBody,
+  PlatformAuditResponse,
   PlatformLoginResponse,
   PlatformStats,
+  PlatformUsersResponse,
   SubscriptionPlan,
 } from './types';
 
@@ -41,4 +43,29 @@ export const setSubscription = (
 export const setFeature = (id: string, feature_key: string, is_enabled: boolean) =>
   apiClient
     .post(`/platform/businesses/${id}/features`, { feature_key, is_enabled })
+    .then((r) => r.data);
+
+export interface PlatformListParams {
+  business_id?: string;
+  role?: string;
+  status?: 'active' | 'inactive';
+  limit?: number;
+  offset?: number;
+}
+
+export const listPlatformUsers = (params: PlatformListParams = {}) =>
+  apiClient
+    .get<PlatformUsersResponse>('/platform/users', { params })
+    .then((r) => r.data);
+
+export const listPlatformStaff = (params: PlatformListParams = {}) =>
+  apiClient
+    .get<PlatformUsersResponse>('/platform/staff', { params })
+    .then((r) => r.data);
+
+export const listPlatformAuditLogs = (
+  params: { business_id?: string; action?: string; limit?: number; offset?: number } = {},
+) =>
+  apiClient
+    .get<PlatformAuditResponse>('/platform/audit-logs', { params })
     .then((r) => r.data);

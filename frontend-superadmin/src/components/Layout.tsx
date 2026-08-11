@@ -21,11 +21,11 @@ const NAV_ITEMS: NavItem[] = [
     subtitle: 'Platforma umumiy statistikasi va faol kafelar',
   },
   { to: '/kafelar', label: 'Kafelar', icon: '☕' },
-  { to: '/foydalanuvchilar', label: 'Foydalanuvchilar', icon: '👥', soon: true },
+  { to: '/foydalanuvchilar', label: 'Foydalanuvchilar', icon: '👥' },
   { to: '/obunalar', label: 'Obunalar', icon: '💳' },
-  { to: '/xodimlar', label: 'Xodimlar', icon: '👨‍💼', soon: true },
+  { to: '/xodimlar', label: 'Xodimlar', icon: '👨‍💼' },
   { to: '/feature-flags', label: 'Feature Flags', icon: '⚑' },
-  { to: '/audit', label: 'Audit jurnali', icon: '📋', soon: true },
+  { to: '/audit', label: 'Audit jurnali', icon: '📋' },
   { to: '/sozlamalar', label: 'Platforma sozlamalari', icon: '⚙️', soon: true },
 ];
 
