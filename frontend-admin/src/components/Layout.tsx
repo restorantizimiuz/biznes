@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { useTranslation } from '../i18n/LanguageContext';
 import type { TranslationKey } from '../i18n/dictionaries';
 import type { UserRole } from '../api/types';
 import { useOrderNotifications } from '../notifications/useOrderNotifications';
+import { getSettings } from '../api/endpoints';
 
 // Har bir bo'lim qaysi rollarga ko'rinishi.
 //
@@ -40,6 +42,12 @@ export default function Layout() {
   const { connected, soundBlocked } = useOrderNotifications();
   const [menuOpen, setMenuOpen] = useState(false);
 
+  // Xuddi shu ['settings'] so'rovi LanguageContext'da ham ishlatiladi — bitta
+  // umumiy keshdan foydalanadi, shuning uchun qo'shimcha so'rov yubormaydi va
+  // Sozlamalar sahifasida saqlangandan keyin (u shu queryKey'ni invalidate
+  // qiladi) sidebar'dagi kafe nomi ham avtomatik yangilanadi.
+  const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: getSettings });
+
   const items = navItemsForRole(auth?.role);
   const currentItem = items.find((item) =>
     item.end ? location.pathname === item.to : location.pathname.startsWith(item.to),
@@ -61,7 +69,9 @@ export default function Layout() {
         🍽️
       </div>
       <div className="min-w-0">
-        <p className="truncate text-sm font-semibold text-slate-900">{t('app.title')}</p>
+        <p className="truncate text-sm font-semibold text-slate-900">
+          {settings?.name || t('app.title')}
+        </p>
         <p className="truncate text-xs text-slate-400">{t('app.subtitle')}</p>
       </div>
     </div>
