@@ -13,7 +13,7 @@ import {
   uploadImage,
 } from '../api/endpoints';
 import { resolveImageUrl } from '../api/client';
-import type { Product } from '../api/types';
+import type { Category, Product } from '../api/types';
 import { useTranslation } from '../i18n/LanguageContext';
 import ModalShell from '../components/ModalShell';
 import ImageCropper from '../components/ImageCropper';
@@ -35,11 +35,6 @@ export default function MenuPage() {
       setNewCategory('');
       queryClient.invalidateQueries({ queryKey: ['categories'] });
     },
-  });
-
-  const renameCategoryMutation = useMutation({
-    mutationFn: ({ id, name }: { id: string; name: string }) => updateCategory(id, name),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['categories'] }),
   });
 
   const deleteCategoryMutation = useMutation({
@@ -82,6 +77,7 @@ export default function MenuPage() {
   });
 
   const [editing, setEditing] = useState<Product | null>(null);
+  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
 
   function handleAddCategory(e: FormEvent) {
     e.preventDefault();
@@ -91,13 +87,6 @@ export default function MenuPage() {
   function handleAddProduct(e: FormEvent) {
     e.preventDefault();
     if (productForm.name.trim() && selectedCategory) productMutation.mutate();
-  }
-
-  function handleRenameCategory(id: string, currentName: string) {
-    const name = prompt(t('menu.renameCategory'), currentName);
-    if (name && name.trim() && name !== currentName) {
-      renameCategoryMutation.mutate({ id, name: name.trim() });
-    }
   }
 
   return (
@@ -122,16 +111,22 @@ export default function MenuPage() {
               <li key={c.id} className="group flex items-center gap-1">
                 <button
                   onClick={() => setSelectedCategory(c.id)}
-                  className={`min-w-0 flex-1 truncate rounded-lg px-3 py-2 text-left text-sm ${
+                  className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm ${
                     selectedCategory === c.id
                       ? 'bg-indigo-50 text-indigo-700'
                       : 'hover:bg-slate-50'
                   }`}
                 >
-                  {c.name}
+                  <CategoryThumb category={c} />
+                  <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                  {!c.is_active && (
+                    <span className="shrink-0 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] text-slate-600">
+                      {t('menu.hidden')}
+                    </span>
+                  )}
                 </button>
                 <button
-                  onClick={() => handleRenameCategory(c.id, c.name)}
+                  onClick={() => setEditingCategory(c)}
                   title={t('app.edit')}
                   className="shrink-0 rounded-lg px-2 py-1 text-xs text-slate-400 hover:bg-slate-100 hover:text-slate-700"
                 >
@@ -264,7 +259,234 @@ export default function MenuPage() {
           }}
         />
       )}
+
+      {editingCategory && (
+        <CategoryEditModal
+          category={editingCategory}
+          onClose={() => setEditingCategory(null)}
+          onSaved={() => {
+            setEditingCategory(null);
+            queryClient.invalidateQueries({ queryKey: ['categories'] });
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function CategoryThumb({ category }: { category: Category }) {
+  const [failed, setFailed] = useState(false);
+  const src = resolveImageUrl(category.image_url);
+
+  if (!src || failed) {
+    return (
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-100 text-xs">
+        🍱
+      </span>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={category.name}
+      onError={() => setFailed(true)}
+      className="h-7 w-7 shrink-0 rounded-md object-cover"
+    />
+  );
+}
+
+/**
+ * Kategoriya tahrirlash oynasi.
+ *
+ * Ilgari kategoriyani faqat `prompt()` orqali qayta nomlash mumkin edi —
+ * rasm ham, izoh ham yo'q edi. Bu yerda ProductEditModal bilan **bir xil**
+ * naqsh ishlatiladi: ModalShell + ImageCropper + uploadImage, shuning uchun
+ * yangi rasm yuklash mantig'i yozilmaydi.
+ */
+function CategoryEditModal({
+  category,
+  onClose,
+  onSaved,
+}: {
+  category: Category;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { t } = useTranslation();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [form, setForm] = useState({
+    name: category.name,
+    description: category.description ?? '',
+    image_url: category.image_url ?? '',
+    sort_order: String(category.sort_order ?? 0),
+    is_active: category.is_active,
+  });
+  const [error, setError] = useState<string | null>(null);
+  const [cropSrc, setCropSrc] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (cropSrc) URL.revokeObjectURL(cropSrc);
+    };
+  }, [cropSrc]);
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      updateCategory(category.id, {
+        name: form.name.trim(),
+        description: form.description,
+        image_url: form.image_url,
+        sort_order: Number(form.sort_order) || 0,
+        is_active: form.is_active,
+      }),
+    onSuccess: onSaved,
+    onError: (err: any) => setError(err?.response?.data?.error ?? t('app.error')),
+  });
+
+  function handleFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setCropSrc(URL.createObjectURL(file));
+  }
+
+  async function handleCropped(blob: Blob) {
+    setUploading(true);
+    setError(null);
+    try {
+      const { url } = await uploadImage(blob);
+      setForm((f) => ({ ...f, image_url: url }));
+      setCropSrc(null);
+    } catch (err: any) {
+      setError(err?.response?.data?.error ?? t('menu.uploadFailed'));
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  if (cropSrc) {
+    return (
+      <ImageCropper imageSrc={cropSrc} onCancel={() => setCropSrc(null)} onCropped={handleCropped} />
+    );
+  }
+
+  const preview = resolveImageUrl(form.image_url);
+
+  return (
+    <ModalShell
+      title={t('menu.editCategory')}
+      subtitle={category.name}
+      onClose={onClose}
+      footer={
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50"
+          >
+            {t('app.cancel')}
+          </button>
+          <button
+            onClick={() => saveMutation.mutate()}
+            disabled={saveMutation.isPending || uploading || !form.name.trim()}
+            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+          >
+            {saveMutation.isPending ? t('app.saving') : t('app.save')}
+          </button>
+        </div>
+      }
+    >
+      <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+        <div className="flex items-start gap-4">
+          <div className="h-24 w-24 shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+            {preview ? (
+              <img src={preview} alt={form.name} className="h-full w-full object-cover" />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-2xl">🍱</div>
+            )}
+          </div>
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-slate-600">{t('menu.image')}</p>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleFilePicked}
+              className="hidden"
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className="block rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-900 disabled:opacity-60"
+            >
+              {uploading
+                ? t('menu.uploading')
+                : form.image_url
+                  ? t('menu.changeImage')
+                  : t('menu.chooseImage')}
+            </button>
+            {form.image_url && (
+              <button
+                onClick={() => setForm((f) => ({ ...f, image_url: '' }))}
+                className="block text-xs text-slate-400 hover:text-red-600"
+              >
+                {t('menu.removeImage')}
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-600">
+            {t('menu.categoryName')}
+          </label>
+          <input
+            value={form.name}
+            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-600">
+            {t('menu.categoryDescription')}
+          </label>
+          <textarea
+            value={form.description}
+            onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+            rows={2}
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 items-end gap-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600">
+              {t('menu.sortOrder')}
+            </label>
+            <input
+              type="number"
+              value={form.sort_order}
+              onChange={(e) => setForm((f) => ({ ...f, sort_order: e.target.value }))}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            />
+          </div>
+          {/* Yashirilgan kategoriya mijoz menyusidan chiqib ketadi, lekin
+              kassada qoladi — mavsumiy taomlarni o'chirmasdan yopish uchun. */}
+          <label className="flex items-center gap-2 pb-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={form.is_active}
+              onChange={(e) => setForm((f) => ({ ...f, is_active: e.target.checked }))}
+            />
+            {t('menu.visibleToCustomers')}
+          </label>
+        </div>
+
+        {error && <p className="text-sm text-red-600">{error}</p>}
+      </div>
+    </ModalShell>
   );
 }
 

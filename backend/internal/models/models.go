@@ -49,8 +49,12 @@ type Category struct {
 	ID         string `json:"id"`
 	BusinessID string `json:"business_id"`
 	Name       string `json:"name"`
-	SortOrder  int    `json:"sort_order"`
-	IsActive   bool   `json:"is_active"`
+	// Description va ImageURL mahsulotdagi ustunlar bilan bir xil atalgan —
+	// frontend ikkalasini bir xil komponentlar bilan chizadi.
+	Description string `json:"description"`
+	ImageURL    string `json:"image_url"`
+	SortOrder   int    `json:"sort_order"`
+	IsActive    bool   `json:"is_active"`
 }
 
 // Product - menyudagi mahsulot

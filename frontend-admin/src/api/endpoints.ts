@@ -5,12 +5,16 @@ import type {
   DailySummary,
   DetailedReport,
   Floor,
+  KitchenStatus,
   LoginResponse,
+  MeResponse,
+  PermissionMap,
   Product,
   Receipt,
   ReportFilters,
   Settings,
   Staff,
+  StaffPermissions,
   SubscriptionPlan,
   Table,
 } from './types';
@@ -26,8 +30,16 @@ export const listCategories = () =>
 export const createCategory = (name: string, sort_order = 0) =>
   apiClient.post('/menu/categories', { name, sort_order }).then((r) => r.data);
 
-export const updateCategory = (id: string, name: string) =>
-  apiClient.patch(`/menu/categories/${id}`, { name }).then((r) => r.data);
+export const updateCategory = (
+  id: string,
+  body: {
+    name: string;
+    description?: string;
+    image_url?: string;
+    sort_order?: number;
+    is_active?: boolean;
+  },
+) => apiClient.patch(`/menu/categories/${id}`, body).then((r) => r.data);
 
 export const deleteCategory = (id: string) =>
   apiClient.delete(`/menu/categories/${id}`).then((r) => r.data);
@@ -109,7 +121,7 @@ export const addOrderItems = (
 export const activateOrder = (orderId: string) =>
   apiClient.post(`/orders/${orderId}/activate`).then((r) => r.data);
 
-export const updateKitchenStatus = (orderId: string, status: 'preparing' | 'ready') =>
+export const updateKitchenStatus = (orderId: string, status: KitchenStatus) =>
   apiClient.post(`/orders/${orderId}/kitchen-status`, { status }).then((r) => r.data);
 
 export const updateOrderItem = (orderId: string, itemId: string, quantity: number) =>
@@ -156,6 +168,34 @@ export const createStaff = (body: {
   password: string;
   role: string;
 }) => apiClient.post('/staff', body).then((r) => r.data);
+
+/**
+ * Xodimni tahrirlash. Faqat yuborilgan maydonlar o'zgaradi — shuning uchun
+ * hammasi ixtiyoriy. `password` bo'sh bo'lsa parol tegilmaydi,
+ * `is_active: true` esa bloklangan xodimni qaytaradi.
+ */
+export const updateStaff = (
+  id: string,
+  body: {
+    full_name?: string;
+    login?: string;
+    role?: string;
+    is_active?: boolean;
+    password?: string;
+  },
+) => apiClient.patch(`/staff/${id}`, body).then((r) => r.data);
+
+export const getStaffPermissions = (id: string) =>
+  apiClient.get<StaffPermissions>(`/staff/${id}/permissions`).then((r) => r.data);
+
+// PUT — shaxsiy o'zgartirishlar to'liq almashtiriladi. Ro'yxatda bo'lmagan
+// kalit o'chiriladi, ya'ni rol standartiga qaytadi.
+export const updateStaffPermissions = (id: string, overrides: PermissionMap) =>
+  apiClient.put(`/staff/${id}/permissions`, { overrides }).then((r) => r.data);
+
+// Vakolatlar login javobida ham keladi, lekin admin ularni o'zgartirsa
+// o'sha ro'yxat eskiradi. Bu endpoint sahifa ochilganda qayta o'qiydi.
+export const getMe = () => apiClient.get<MeResponse>('/me').then((r) => r.data);
 
 export const getDailySummary = (from: string, to: string) =>
   apiClient.get<DailySummary>('/reports/daily', { params: { from, to } }).then((r) => r.data);
@@ -216,6 +256,7 @@ export const updateSettings = (body: {
   printer_address?: string;
   printer_paper_width?: number;
   notify_sound?: boolean;
+  min_order_amount?: number;
 }) => apiClient.patch('/settings', body).then((r) => r.data);
 
 export const updateSubscription = (plan: SubscriptionPlan) =>

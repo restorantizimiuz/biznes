@@ -62,6 +62,13 @@ func main() {
 	if businessCode == "" {
 		log.Fatal("BUSINESS_CODE muhit o'zgaruvchisi kiritilishi shart (backend'dagi businesses.business_code bilan bir xil bo'lishi kerak)")
 	}
+	// Uydan buyurtma sahifasining bazasi. Sozlanmagan bo'lsa WEBAPP_URL
+	// ishlatiladi — odatda ikkalasi bitta domenda joylashadi.
+	webMenuURL := os.Getenv("WEB_MENU_URL")
+	if webMenuURL == "" {
+		webMenuURL = webAppURL
+		log.Println("WEB_MENU_URL sozlanmagan — uydan buyurtma havolasi uchun WEBAPP_URL ishlatiladi")
+	}
 
 	username, err := getMe(token)
 	if err != nil {
@@ -83,7 +90,7 @@ func main() {
 			if u.Message == nil || !strings.HasPrefix(u.Message.Text, "/start") {
 				continue
 			}
-			if err := handleStart(token, webAppURL, businessCode, u.Message.Chat.ID,
+			if err := handleStart(token, webAppURL, webMenuURL, businessCode, u.Message.Chat.ID,
 				parseStartTableToken(u.Message.Text)); err != nil {
 				log.Printf("Xabar yuborishda xatolik: %v", err)
 			}
@@ -147,25 +154,33 @@ func parseStartTableToken(text string) string {
 
 // handleStart - /start buyrug'ini qayta ishlaydi.
 //
-// WebApp havolasiga har doim ?business=<BUSINESS_CODE> qo'shiladi — bu "qaysi restoran"
-// ekanini bildiradi, shunda WebApp ochilgan zahoti menyuni ko'rsata oladi
-// (backend: GET /api/v1/menu?business_code=...).
+// Bot endi ikki xil javob beradi:
 //
-// Stol QR kodi orqali kirilgan bo'lsa (/start table_<token>), havolaga ?table=<token>
-// ham qo'shiladi va WebApp **stol rejimida** ochiladi: buyurtma turi tanlovi va QR
-// skaner bosqichi ko'rsatilmaydi, yuqorida esa stolning joriy hisobi doim ko'rinib
-// turadi. Stolda o'tirgan mijozga aynan shu ikki narsa kerak — menyu va hisob.
+//  1. STOL QR KODI ORQALI (/start table_<token>) — WebApp tugmasi yuboriladi.
+//     Havolaga ?table=<token> qo'shiladi va ilova stol rejimida ochiladi:
+//     menyu va stolning joriy hisobi. Stolda o'tirgan mijozga aynan shu kerak.
 //
-// Stolsiz oddiy /start esa avvalgidek to'liq oqimni beradi (stolga / yetkazib berish /
-// olib ketish), stol keyinchalik checkout paytida QR skaner orqali aniqlanadi.
-func handleStart(token, webAppURL, businessCode string, chatID int64, tableToken string) error {
+//  2. ODDIY /start — WebApp emas, **oddiy havola** yuboriladi. Sabab: uydan
+//     buyurtma berish Telegram'dan olib tashlandi (u initData imzosini talab
+//     qilardi va bot tokenisiz umuman ishlamasdi). Endi u ochiq veb sahifada:
+//     <WEB_MENU_URL>/menyu/<business_code>. Mijoz uni brauzerda ochadi,
+//     manzilini xaritadan belgilaydi va buyurtma beradi.
+func handleStart(token, webAppURL, webMenuURL, businessCode string, chatID int64, tableToken string) error {
+	// Stolsiz /start — ochiq veb menyu havolasi.
+	if tableToken == "" {
+		link := strings.TrimSuffix(webMenuURL, "/") + "/menyu/" + businessCode
+		text := "Assalomu alaykum! 👋\n\n" +
+			"Uydan buyurtma berish uchun menyumizni oching:\n" + link + "\n\n" +
+			"Restoranda o'tirgan bo'lsangiz, stolingizdagi QR kodni skanerlang — " +
+			"shunda stolingiz hisobi ham ko'rinadi."
+		return sendMessageWithLink(token, chatID, text, "🍽️ Menyuni ochish", link)
+	}
+
 	appURL := webAppURL
 	if u, err := url.Parse(webAppURL); err == nil {
 		q := u.Query()
 		q.Set("business", businessCode)
-		if tableToken != "" {
-			q.Set("table", tableToken)
-		}
+		q.Set("table", tableToken)
 		u.RawQuery = q.Encode()
 		appURL = u.String()
 	} else {
@@ -173,15 +188,28 @@ func handleStart(token, webAppURL, businessCode string, chatID int64, tableToken
 	}
 
 	welcomeText := "Assalomu alaykum! 👋\n\n" +
-		"Bizning botga xush kelibsiz! Buyurtma berish uchun menyuni oching."
-	buttonText := "🍽️ Menyuni ochish"
-	if tableToken != "" {
-		welcomeText = "Assalomu alaykum! 👋\n\n" +
-			"Stolingiz menyusi tayyor. Buyurtma berish va hisobingizni ko'rish uchun oching."
-		buttonText = "🍽️ Menyu va hisob"
-	}
+		"Stolingiz menyusi tayyor. Buyurtma berish va hisobingizni ko'rish uchun oching."
+	return sendMessageWithWebApp(token, chatID, welcomeText, "🍽️ Menyu va hisob", appURL)
+}
 
-	return sendMessageWithWebApp(token, chatID, welcomeText, buttonText, appURL)
+// sendMessageWithLink - oddiy URL tugmasi (WebApp emas).
+//
+// WebApp tugmasidan farqi: u brauzerda ochiladi va HTTPS domen talab qilmaydi
+// (Telegram WebApp esa faqat HTTPS'da ishlaydi). Uydan buyurtma sahifasi
+// Telegram ichida ochilishi shart emas — aksincha, mijoz havolani do'stlariga
+// yuborishi yoki Instagram'dan kirishi mumkin.
+func sendMessageWithLink(token string, chatID int64, text, buttonText, link string) error {
+	payload := map[string]any{
+		"chat_id":                  chatID,
+		"text":                     text,
+		"disable_web_page_preview": true,
+		"reply_markup": map[string]any{
+			"inline_keyboard": [][]map[string]any{
+				{{"text": buttonText, "url": link}},
+			},
+		},
+	}
+	return callTelegramAPI(token, "sendMessage", payload, nil)
 }
 
 // sendMessageWithWebApp - Telegram Bot API'ning "web_app" tugma turidan foydalanadi:

@@ -725,3 +725,174 @@ Kirish ma'lumotlari:
 > `go run` bu mashinada ishlamaydi (vaqtinchalik papkadagi exe bloklanadi) —
 > har doim `go build -o server.exe` qilib, so'ng `./server.exe` ishga
 > tushiriladi.
+
+---
+
+## 6-bosqich — Online buyurtma veb sahifaga ko'chirildi, xodim vakolatlari joriy etildi (2026-08-12)
+
+`git pull` bilan boshlandi (`00858ec..6f76dd4`, 39 fayl — super-admin paneli
+to'ldirilgan edi).
+
+To'liq tushuntirish alohida hujjatda: [`docs/online-buyurtma-va-vakolatlar.md`](docs/online-buyurtma-va-vakolatlar.md).
+Bu yerda faqat qisqacha xulosa.
+
+### 6.1. Nima uchun
+
+Uydan buyurtma **faqat Telegram orqali** ishlardi va u `TELEGRAM_BOT_TOKEN`
+hamda `initData` imzosini talab qilardi — ya'ni kafe bot ochmaguncha online
+savdo qila olmasdi. Kafelar esa Instagram profiliga oddiy havola qo'yishni
+xohlashadi.
+
+Yo'l-yo'lakay uchta boshqa kamchilik ham chiqdi:
+- kategoriyani faqat `prompt()` orqali qayta nomlash mumkin edi (rasm, izoh yo'q);
+- xodimni tahrirlab bo'lmasdi — **bloklangan xodimni qaytarish imkoni umuman yo'q edi**;
+- ofitsiant buyurtmalar bo'limiga kira olmasdi, ya'ni ofitsiant panelining ma'nosi yo'q edi.
+
+### 6.2. Bajarilgan ishlar
+
+| Qism | Natija |
+|---|---|
+| **Veb buyurtma** | `/menyu/<kod>` — Instagram havolasi. Menyu → savat → ism/telefon → xarita → to'lov usuli → tasdiqlash |
+| **Holat kuzatuvi** | `/buyurtma/<token>` — mijoz bosqichlarni real vaqtda ko'radi (5 s da yangilanadi) |
+| **Vakolatlar** | 14 ta kalit, rol standarti + har bir xodimga alohida sozlash (`user_permissions`) |
+| **Ofitsiant** | Endi buyurtma yaratadi va tahrirlaydi; to'lov/chegirma/bekor qilish yopiq |
+| **Xodim tahrirlash** | Ism, login, rol, parol tiklash, bloklash **va qaytarish** |
+| **Kategoriya** | Rasm, izoh, tartib, "mijozlarga ko'rinsin" bayrog'i |
+| **Telegram** | Faqat stol rejimi qoldi; QR skanerlash bosqichi olib tashlandi |
+
+### 6.3. Muhim texnik qarorlar
+
+**Xarita — OpenStreetMap.** Yandex ham, Google ham API kalit talab qiladi
+(ro'yxatdan o'tish, Google'da billing) — buni faqat kafe egasi qila oladi.
+Shuning uchun kalitsiz ishlaydigan OSM + Leaflet tanlandi. Cheklovi halol
+qayd etilgan: O'zbekistonda uy raqamlari to'liq emas, shuning uchun xarita
+manzilni faqat **taklif qiladi**, mijoz uni doim tahrirlay oladi va "mo'ljal"
+yozadi; kuryerga esa aniq koordinata boradi. Provayder bitta modul ortida
+(`maps/provider.ts`) — Yandex kaliti olinsa faqat o'sha fayl almashadi.
+
+**Nominatim backend proksisi.** Uning shartlari aniq `User-Agent` va
+sekundiga 1 ta so'rovni talab qiladi; brauzerdan chaqirilsa mijozlar IP'si
+bloklanishi mumkin edi. Proksi keshlaydi (24 soat) va chastotani ushlaydi.
+
+**Vakolatlar JWT ichiga qo'yilmadi.** Admin ruxsatni o'zgartirsa, token
+muddati tugagunicha (24 soat) eski ruxsat amal qilib turardi. O'rniga
+30 soniyalik xotira keshi, admin o'zgartirganda darhol tozalanadi.
+
+**Buyurtma manbasi roldan aniqlanadi**, mijoz yuborgan qiymatdan emas —
+aks holda ofitsiant so'rovni o'zgartirib buyurtmasini kassirniki qilib
+ko'rsatishi va hisobotdagi "qaysi ofitsiant" ustuni ishonchsiz bo'lib
+qolishi mumkin edi.
+
+**Yangi holat mashinasi qurilmadi** — mavjud `status` va `kitchen_status`
+kengaytirildi (`delivering`, `delivered` qo'shildi, tur bo'yicha tekshiriladi).
+
+### 6.4. Migratsiyalar
+
+`009_web_order_source.sql` (enum `online_web` — **alohida faylda**, chunki
+PostgreSQL enum qiymatini o'sha tranzaksiyada ishlatishga ruxsat bermaydi),
+`010_web_order_fields.sql`, `011_category_media.sql`, `012_user_permissions.sql`.
+
+### 6.5. Sinov natijalari
+
+Uchma-uch, haqiqiy HTTP so'rovlar bilan:
+
+- **Vakolatlar — 11/11.** Ofitsiant hisobotdan, to'lovdan va chegirmadan 403
+  oladi; admin `menu.edit` ni olib qo'ygach ofitsiant menyuga yoza olmaydi;
+  admin o'zini tizimdan qulflay olmaydi.
+- **Veb buyurtma — 9/9.** Holat oqimi to'liq aylandi; **soxta narx e'tiborsiz
+  qoldirildi** (narx bazadan olinadi); stol buyurtmasida `delivering` 400 bilan
+  rad etildi.
+- **Ofitsiant — 9/9.** Manba `waiter` bo'ldi, `waiter_assignments` jadvaliga
+  yozuv tushdi (jadval sxemada bor edi, lekin hech qachon ishlatilmagan edi).
+- `go build`, `go vet`, `gofmt`, `tsc --noEmit`, `npm run build` — toza.
+
+**Sinalmagan:** yangi React sahifalari brauzerda ochilmagan. Tekshirish kerak:
+Leaflet xaritasi, brauzer geolokatsiyasi, holat kuzatuvi ekrani.
+
+### 6.6. Yangi muhit o'zgaruvchilari
+
+`WEB_MENU_BASE_URL` va `NOMINATIM_URL` (backend), `WEB_MENU_URL` (bot).
+`VITE_BOT_USERNAME` endi kerak emas — QR skanerlash bosqichi olib tashlandi.
+
+### 6.7. Muhitdagi o'zgarish
+
+Smart App Control bu mashinada o'chirilgan (`VerifiedAndReputablePolicyState=0`),
+shuning uchun `go build -o server.exe` + `./server.exe` endi ishlaydi va API'ni
+uchma-uch sinash mumkin bo'ldi.
+
+---
+
+## 7-bosqich — 6-bosqich ishini uchma-uch tekshirish (2026-08-12)
+
+`docs/online-buyurtma-va-vakolatlar.md` da yozilgan to'rt qism (ochiq veb
+buyurtma, holat kuzatuvi, xodim vakolatlari, kategoriya tahriri) haqiqatan
+ishlashi tekshirildi. 6-bosqichda React sahifalari **brauzerda ochilmagan**
+edi — asosiy bo'shliq shu edi.
+
+### 7.1. Nima qilindi
+
+| Bosqich | Natija |
+|---|---|
+| Kod auditi | To'rt qismning har bir bandi kod bilan solishtirildi |
+| Baza sxemasi | 009–012 migratsiyalari qo'llangani va ustunlar to'g'riligi tasdiqlandi |
+| HTTP sinovlari | 114 ta tekshiruv — hammasi muvaffaqiyatli |
+| Brauzer sinovlari | 84 ta tekshiruv (Chromium) — hammasi muvaffaqiyatli, konsolda xato yo'q |
+| Yig'ish | `go build`, `go vet`, `gofmt`, `tsc -b`, `npm run build` — toza |
+
+### 7.2. Topilgan va tuzatilgan xato
+
+**Mijoz ma'lumotlari bloki qabul qilingandan keyin yo'qolib qolardi.**
+
+`OnlineCustomerDetails` (ism, telefon, manzil, mo'ljal, to'lov niyati,
+"🗺 Xaritada ochish") faqat `PendingApprovalPanel` da — ya'ni buyurtma
+`new` holatida turganda — chizilardi. Kassir "Qabul qilish" ni bosishi
+bilan blok butunlay yo'qolar edi.
+
+Aynan o'sha paytda kuryer jo'natiladi: kassirga telefon, manzil va xarita
+nuqtasi eng ko'p **qabul qilingandan keyin** kerak bo'ladi. Ya'ni ma'lumot
+eng zarur paytda ekrandan ketardi.
+
+Tuzatildi: blok endi `ActiveOrderPanel` da ham chiqadi
+(`frontend-admin/src/pages/OrdersPage.tsx`). Brauzer sinovi buni
+tasdiqlaydi — qabul qilingandan keyin ham telefon, manzil va xarita
+havolasi joyida turadi.
+
+### 7.3. Brauzerda birinchi marta tasdiqlangan narsalar
+
+- **Leaflet xaritasi** haqiqatan chiziladi: plitalar yuklanadi, zoom
+  boshqaruvi ishlaydi, OSM manba yozuvi (litsenziya talabi) ko'rinadi,
+  nishon markazda qotib turadi.
+- **Brauzer geolokatsiyasi** so'raladi va koordinata Nominatim proksisi
+  orqali manzil matniga aylanadi.
+- Mijoz manzilni qo'lda tahrirlagach, xaritadan kelgan taklif uni **bosib
+  ketmaydi** (`addressTouched` ref haqiqatan ishlaydi).
+- `OrderTracking` har 5 soniyada o'zi yangilanadi: kassir bosqichni
+  o'zgartirgach mijoz sahifasi qayta yuklamasdan yangilandi; bekor qilinganda
+  mijoz buni ko'rdi.
+- Sozlamalardagi **QR kod** chiziladi, havola to'g'ri yig'iladi.
+- Xodim oynasidagi **14 ta vakolat** uch holatli tugma bilan chiziladi va
+  saqlanadi.
+- **Ofitsiant ko'zi bilan**: Kassa/Menyu/Stollar bor; Hisobot, Sozlamalar va
+  Xodimlar yo'q; kunlik daromad ko'rinmaydi; to'lov, chegirma va chek
+  tugmalari yo'q; `/reports` va `/staff` ga URL orqali ham kira olmaydi.
+
+### 7.4. Xavfsizlik bo'yicha tasdiqlanganlari
+
+- Soxta narx e'tiborsiz qoldiriladi — summa **har doim bazadan** hisoblanadi.
+- Olib ketish buyurtmasiga `delivering`/`delivered` qo'yib bo'lmaydi (400).
+- Ikkinchi admin ham kafe **egasini** tahrirlay, bloklay yoki vakolatini
+  cheklay olmaydi (403).
+- Admin o'zidan `staff.manage` ni olib tashlay olmaydi, o'z rolini
+  o'zgartira va o'zini bloklay olmaydi.
+- Vakolat o'zgarganda 30 soniyalik kesh **darhol** tozalanadi — ofitsiant
+  keyingi so'rovdayoq 403 oladi.
+- IP (daqiqasiga 5 ta), telefon (3 ta ochiq buyurtma) va yetkazib berish
+  uchun eng kam summa chegaralari ishlaydi.
+
+### 7.5. Hali sinalmagani
+
+Telegram WebApp haqiqiy Telegram ichida sinalmagan — `initData` imzosini
+faqat haqiqiy Telegram beradi, bot tokeni esa hozir yo'q.
+
+Sinov ma'lumotlari (soxta buyurtmalar va vaqtinchalik hisoblar) bazadan
+tozalandi.

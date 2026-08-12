@@ -51,8 +51,14 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 			return c.Status(400).JSON(fiber.Map{"error": "Mahsulot miqdori musbat son bo'lishi kerak"})
 		}
 	}
-	if req.Source == "" {
-		req.Source = "cashier"
+	// Manba mijoz yuborgan qiymatdan emas, **roldan** aniqlanadi: so'rovni
+	// brauzer konsolidan o'zgartirib, ofitsiant o'z buyurtmasini kassirniki
+	// qilib ko'rsatishi mumkin edi va hisobotdagi "qaysi ofitsiant" ustuni
+	// ishonchsiz bo'lib qolardi.
+	role, _ := c.Locals("role").(string)
+	req.Source = "cashier"
+	if role == "waiter" {
+		req.Source = "waiter"
 	}
 
 	ctx := context.Background()
@@ -110,7 +116,7 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 	}
 	// Ofitsiant ochgan buyurtma xizmat ko'rsatuvchiga bog'lanadi — hisobotda
 	// "qaysi ofitsiant" ustuni shu yozuvdan to'ldiriladi.
-	if role, _ := c.Locals("role").(string); role == "waiter" {
+	if role == "waiter" {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO waiter_assignments (order_id, waiter_id) VALUES ($1,$2)`,
 			orderID, userID); err != nil {
@@ -167,8 +173,22 @@ func (h *OrderHandler) ActivateOrder(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"success": true})
 }
 
-// UpdateKitchenStatus - kassir buyurtmani "tayyorlanmoqda" yoki "tayyor" deb belgilaydi.
-// Bu holat mijozga QR/Telegram sahifasida ko'rinib turadi.
+// kitchenStagesForType - buyurtma turiga ruxsat etilgan tayyorlash bosqichlari.
+//
+// Stolda o'tirgan yoki olib ketadigan mijoz uchun ikkita bosqich yetarli.
+// Yetkazib berishda esa taom tayyor bo'lgandan keyin yana ikkitasi bor va
+// mijoz ularni o'z kuzatuv sahifasida ko'radi.
+func kitchenStagesForType(orderType string) map[string]bool {
+	stages := map[string]bool{"preparing": true, "ready": true}
+	if orderType == "delivery" {
+		stages["delivering"] = true
+		stages["delivered"] = true
+	}
+	return stages
+}
+
+// UpdateKitchenStatus - kassir buyurtmaning tayyorlash bosqichini belgilaydi.
+// Bu holat mijozga QR/Telegram va veb kuzatuv sahifasida ko'rinib turadi.
 func (h *OrderHandler) UpdateKitchenStatus(c *fiber.Ctx) error {
 	businessID := c.Locals("business_id").(string)
 	orderID := c.Params("id")
@@ -176,11 +196,25 @@ func (h *OrderHandler) UpdateKitchenStatus(c *fiber.Ctx) error {
 	var body struct {
 		Status string `json:"status"`
 	}
-	if err := c.BodyParser(&body); err != nil || (body.Status != "preparing" && body.Status != "ready") {
-		return c.Status(400).JSON(fiber.Map{"error": "Holat 'preparing' yoki 'ready' bo'lishi kerak"})
+	if err := c.BodyParser(&body); err != nil || body.Status == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "Holat kiritilishi shart"})
 	}
 
 	ctx := context.Background()
+
+	// Ruxsat etilgan bosqich buyurtma turiga bog'liq, shuning uchun avval
+	// turni o'qiymiz. Bu bir vaqtning o'zida buyurtma shu kafega tegishli
+	// ekanini ham tekshiradi.
+	var orderType string
+	if err := h.DB.QueryRow(ctx,
+		`SELECT order_type FROM orders WHERE id=$1 AND business_id=$2 AND status IN ('new','activated')`,
+		orderID, businessID).Scan(&orderType); err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "Buyurtma topilmadi"})
+	}
+	if !kitchenStagesForType(orderType)[body.Status] {
+		return c.Status(400).JSON(fiber.Map{"error": "Bu holat ushbu buyurtma turiga mos emas"})
+	}
+
 	cmd, err := h.DB.Exec(ctx,
 		`UPDATE orders SET kitchen_status=$1 WHERE id=$2 AND business_id=$3 AND status IN ('new','activated')`,
 		body.Status, orderID, businessID)
@@ -704,7 +738,8 @@ func (h *OrderHandler) ListActiveOrders(c *fiber.Ctx) error {
 
 	rows, err := h.DB.Query(ctx, `
 		SELECT o.id, o.table_id, t.name, o.source, o.status, o.kitchen_status,
-		       o.order_type, o.customer_phone, o.delivery_address,
+		       o.order_type, o.customer_name, o.customer_phone, o.delivery_address,
+		       o.delivery_note, o.delivery_lat, o.delivery_lng, o.preferred_payment_method,
 		       o.total_amount, o.discount_amount, o.final_amount,
 		       tc.telegram_username, tc.telegram_id
 		FROM orders o
@@ -718,28 +753,36 @@ func (h *OrderHandler) ListActiveOrders(c *fiber.Ctx) error {
 	defer rows.Close()
 
 	type orderDTO struct {
-		ID               string         `json:"id"`
-		TableID          *string        `json:"table_id"`
-		TableName        *string        `json:"table_name"`
-		Source           string         `json:"source"`
-		Status           string         `json:"status"`
-		KitchenStatus    string         `json:"kitchen_status"`
-		OrderType        string         `json:"order_type"`
-		CustomerPhone    *string        `json:"customer_phone"`
-		DeliveryAddress  *string        `json:"delivery_address"`
-		TotalAmount      float64        `json:"total_amount"`
-		DiscountAmount   float64        `json:"discount_amount"`
-		FinalAmount      float64        `json:"final_amount"`
-		TelegramUsername *string        `json:"telegram_username"`
-		TelegramID       *int64         `json:"telegram_id"`
-		Items            []orderItemDTO `json:"items"`
+		ID              string  `json:"id"`
+		TableID         *string `json:"table_id"`
+		TableName       *string `json:"table_name"`
+		Source          string  `json:"source"`
+		Status          string  `json:"status"`
+		KitchenStatus   string  `json:"kitchen_status"`
+		OrderType       string  `json:"order_type"`
+		CustomerName    *string `json:"customer_name"`
+		CustomerPhone   *string `json:"customer_phone"`
+		DeliveryAddress *string `json:"delivery_address"`
+		DeliveryNote    *string `json:"delivery_note"`
+		// Koordinata manzil matnidan ustun: kassir uni xaritada ochib
+		// kuryerga aniq nuqtani beradi.
+		DeliveryLat            *float64       `json:"delivery_lat"`
+		DeliveryLng            *float64       `json:"delivery_lng"`
+		PreferredPaymentMethod *string        `json:"preferred_payment_method"`
+		TotalAmount            float64        `json:"total_amount"`
+		DiscountAmount         float64        `json:"discount_amount"`
+		FinalAmount            float64        `json:"final_amount"`
+		TelegramUsername       *string        `json:"telegram_username"`
+		TelegramID             *int64         `json:"telegram_id"`
+		Items                  []orderItemDTO `json:"items"`
 	}
 	orders := []orderDTO{}
 	var orderIDs []string
 	for rows.Next() {
 		var o orderDTO
 		if err := rows.Scan(&o.ID, &o.TableID, &o.TableName, &o.Source, &o.Status, &o.KitchenStatus,
-			&o.OrderType, &o.CustomerPhone, &o.DeliveryAddress,
+			&o.OrderType, &o.CustomerName, &o.CustomerPhone, &o.DeliveryAddress,
+			&o.DeliveryNote, &o.DeliveryLat, &o.DeliveryLng, &o.PreferredPaymentMethod,
 			&o.TotalAmount, &o.DiscountAmount, &o.FinalAmount,
 			&o.TelegramUsername, &o.TelegramID); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})

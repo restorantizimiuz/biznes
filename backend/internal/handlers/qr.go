@@ -30,12 +30,13 @@ type menuProductDTO struct {
 // Ham stol-tokeni orqali, ham biznes-kodi orqali menyu olishda ishlatiladi (kod takrorlanmasin deb).
 func (h *QRHandler) fetchMenuCategories(ctx context.Context, businessID string) ([]fiber.Map, error) {
 	rows, err := h.DB.Query(ctx,
-		`SELECT c.id, c.name, p.id, p.name, COALESCE(p.description, ''), p.price, COALESCE(p.image_url, '')
+		`SELECT c.id, c.name, COALESCE(c.description, ''), COALESCE(c.image_url, ''),
+		        p.id, p.name, COALESCE(p.description, ''), p.price, COALESCE(p.image_url, '')
 		 FROM categories c
 		 JOIN products p ON p.category_id = c.id
 		 WHERE c.business_id=$1 AND c.is_active=true AND c.is_deleted=false
 		   AND p.is_available=true AND p.is_deleted=false
-		 ORDER BY c.sort_order`, businessID)
+		 ORDER BY c.sort_order, c.name`, businessID)
 	if err != nil {
 		return nil, err
 	}
@@ -45,14 +46,21 @@ func (h *QRHandler) fetchMenuCategories(ctx context.Context, businessID string) 
 	var order []string
 
 	for rows.Next() {
-		var catID, catName string
+		var catID, catName, catDescription, catImageURL string
 		var p menuProductDTO
-		if err := rows.Scan(&catID, &catName, &p.ID, &p.Name, &p.Description, &p.Price, &p.ImageURL); err != nil {
+		if err := rows.Scan(&catID, &catName, &catDescription, &catImageURL,
+			&p.ID, &p.Name, &p.Description, &p.Price, &p.ImageURL); err != nil {
 			return nil, err
 		}
 
 		if _, ok := categoriesMap[catID]; !ok {
-			categoriesMap[catID] = &fiber.Map{"id": catID, "name": catName, "products": []menuProductDTO{}}
+			categoriesMap[catID] = &fiber.Map{
+				"id":          catID,
+				"name":        catName,
+				"description": catDescription,
+				"image_url":   catImageURL,
+				"products":    []menuProductDTO{},
+			}
 			order = append(order, catID)
 		}
 		items := (*categoriesMap[catID])["products"].([]menuProductDTO)

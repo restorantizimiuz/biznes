@@ -21,8 +21,9 @@ import {
   updateKitchenStatus,
   updateOrderItem,
 } from '../api/endpoints';
-import type { ActiveOrder, Table } from '../api/types';
+import type { ActiveOrder, KitchenStatus, Table } from '../api/types';
 import { checkPrinterHealth, tryPrintReceipt } from '../printer';
+import { useAuth } from '../auth/AuthContext';
 import { useTranslation } from '../i18n/LanguageContext';
 import type { TranslationKey } from '../i18n/dictionaries';
 import ModalShell from '../components/ModalShell';
@@ -31,6 +32,17 @@ import { useOrderNotifications } from '../notifications/useOrderNotifications';
 
 type PaymentMethod = 'cash' | 'card' | 'transfer';
 type CardType = 'uzcard' | 'humo' | 'visa' | 'mastercard';
+
+/**
+ * Buyurtma turiga mos tayyorlash bosqichlari.
+ * Backend ham shu qoidani majburlaydi (orders.go: UpdateKitchenStatus) —
+ * 'delivering'/'delivered' faqat yetkazib berish buyurtmasida qabul qilinadi.
+ */
+function kitchenStagesFor(order: ActiveOrder): KitchenStatus[] {
+  return order.order_type === 'delivery'
+    ? ['preparing', 'ready', 'delivering', 'delivered']
+    : ['preparing', 'ready'];
+}
 
 const CARD_TYPES: CardType[] = ['uzcard', 'humo', 'visa', 'mastercard'];
 
@@ -102,9 +114,16 @@ function StatCard({
 
 export default function OrdersPage() {
   const { t } = useTranslation();
+  const { can } = useAuth();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { focusOrderId, clearFocus } = useOrderNotifications();
+
+  // Ofitsiant uchun kassa ko'rsatkichlari yopiq: kunlik daromad — moliyaviy
+  // ma'lumot va `/reports/daily` unga 403 qaytaradi. Shuning uchun so'rov
+  // umuman yuborilmaydi (aks holda har sahifa ochilishida behuda xato).
+  const canSeeMoney = can('reports.view');
+  const canPay = can('orders.pay');
 
   const { data: floors = [] } = useQuery({ queryKey: ['floors'], queryFn: listFloors });
   // '' — birinchi qavat, 'online' — stolsiz (yetkazib berish/olib ketish) buyurtmalar
@@ -126,10 +145,12 @@ export default function OrdersPage() {
     refetchInterval: 5000,
   });
 
+  // Printer faqat chek chiqaradiganga kerak — ofitsiantda bu tugma yo'q.
   const { data: printerOnline = false } = useQuery({
     queryKey: ['printer-health'],
     queryFn: checkPrinterHealth,
     refetchInterval: PRINTER_HEALTH_INTERVAL_MS,
+    enabled: canPay,
   });
 
   // Bugungi umumiy son/daromad — hozir ochiq bo'lmagan (allaqachon to'langan)
@@ -138,6 +159,7 @@ export default function OrdersPage() {
     queryKey: ['daily-summary', 'today'],
     queryFn: () => getDailySummary(todayISO(), todayISO()),
     refetchInterval: 30000,
+    enabled: canSeeMoney,
   });
 
   const ordersByTable = useMemo(() => {
@@ -197,23 +219,33 @@ export default function OrdersPage() {
           <p className="text-sm text-slate-500">{t('orders.subtitle')}</p>
         </div>
         {/* Printer holati: kassir chek chiqmasligini to'lov paytida emas,
-            oldindan bilib turishi kerak. */}
-        <span
-          className={`rounded-full px-3 py-1 text-xs font-medium ${
-            printerOnline ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
-          }`}
-        >
-          🖨️ {printerOnline ? t('receipt.printerOnline') : t('receipt.printerOffline')}
-        </span>
+            oldindan bilib turishi kerak. Ofitsiantga bu belgi ma'nosiz. */}
+        {canPay && (
+          <span
+            className={`rounded-full px-3 py-1 text-xs font-medium ${
+              printerOnline ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+            }`}
+          >
+            🖨️ {printerOnline ? t('receipt.printerOnline') : t('receipt.printerOffline')}
+          </span>
+        )}
       </div>
 
-      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          icon="🧾"
-          title={t('orders.stat.todayOrders')}
-          value={String(dailySummary?.total_orders ?? 0)}
-          hint={t('orders.stat.todayOrdersHint')}
-        />
+      {/* Ofitsiantga faqat ish bilan bog'liq ikkita ko'rsatkich qoladi —
+          buyurtma soni va daromad moliyaviy ma'lumot hisoblanadi. */}
+      <div
+        className={`mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 ${
+          canSeeMoney ? 'lg:grid-cols-4' : 'lg:grid-cols-2'
+        }`}
+      >
+        {canSeeMoney && (
+          <StatCard
+            icon="🧾"
+            title={t('orders.stat.todayOrders')}
+            value={String(dailySummary?.total_orders ?? 0)}
+            hint={t('orders.stat.todayOrdersHint')}
+          />
+        )}
         <StatCard
           icon="🔥"
           title={t('orders.preparing')}
@@ -226,13 +258,15 @@ export default function OrdersPage() {
           value={String(readyCount)}
           hint={t('orders.stat.readyHint')}
         />
-        <StatCard
-          icon="💰"
-          title={t('orders.stat.revenue')}
-          value={`${(dailySummary?.total_revenue ?? 0).toLocaleString()} ${t('app.currency')}`}
-          hint={t('orders.stat.revenueHint')}
-          highlight
-        />
+        {canSeeMoney && (
+          <StatCard
+            icon="💰"
+            title={t('orders.stat.revenue')}
+            value={`${(dailySummary?.total_revenue ?? 0).toLocaleString()} ${t('app.currency')}`}
+            hint={t('orders.stat.revenueHint')}
+            highlight
+          />
+        )}
       </div>
 
       {receiptStatus && (
@@ -499,6 +533,7 @@ function PendingApprovalPanel({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
+  const { can } = useAuth();
 
   const acceptMutation = useMutation({
     mutationFn: () => activateOrder(order.id),
@@ -521,16 +556,19 @@ function PendingApprovalPanel({
   return (
     <>
       <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5">
+        <OnlineCustomerDetails order={order} />
         <OrderItemsList order={order} onChanged={onChanged} />
       </div>
       <div className="flex gap-2 border-t border-slate-200 px-4 py-4 sm:px-5">
-        <button
-          onClick={handleReject}
-          disabled={rejectMutation.isPending}
-          className="flex-1 rounded-lg border border-red-200 px-4 py-3 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
-        >
-          {t('orders.reject')}
-        </button>
+        {can('orders.cancel') && (
+          <button
+            onClick={handleReject}
+            disabled={rejectMutation.isPending}
+            className="flex-1 rounded-lg border border-red-200 px-4 py-3 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
+          >
+            {t('orders.reject')}
+          </button>
+        )}
         <button
           onClick={() => acceptMutation.mutate()}
           disabled={acceptMutation.isPending}
@@ -540,6 +578,50 @@ function PendingApprovalPanel({
         </button>
       </div>
     </>
+  );
+}
+
+/**
+ * Online buyurtmaning mijoz ma'lumotlari.
+ *
+ * Koordinata manzil matnidan ustun turadi — OSM O'zbekistonda uy raqamini
+ * ko'pincha topa olmaydi, shuning uchun kuryerga aniq nuqta havolasi beriladi.
+ */
+function OnlineCustomerDetails({ order }: { order: ActiveOrder }) {
+  const { t } = useTranslation();
+  const hasPoint = order.delivery_lat != null && order.delivery_lng != null;
+
+  if (!order.customer_name && !order.customer_phone && !order.delivery_address) return null;
+
+  return (
+    <div className="mb-3 space-y-1 rounded-xl bg-slate-50 px-3 py-2.5 text-xs">
+      {order.customer_name && (
+        <p className="font-medium text-slate-900">👤 {order.customer_name}</p>
+      )}
+      {order.customer_phone && (
+        <p className="text-slate-600">
+          📞 <a href={`tel:${order.customer_phone}`}>{order.customer_phone}</a>
+        </p>
+      )}
+      {order.delivery_address && <p className="text-slate-600">📍 {order.delivery_address}</p>}
+      {order.delivery_note && <p className="text-slate-500">💬 {order.delivery_note}</p>}
+      {order.preferred_payment_method && (
+        <p className="text-slate-600">
+          💳 {t(`orders.payment.${order.preferred_payment_method}` as TranslationKey) ??
+            order.preferred_payment_method}
+        </p>
+      )}
+      {hasPoint && (
+        <a
+          href={`https://www.openstreetmap.org/?mlat=${order.delivery_lat}&mlon=${order.delivery_lng}#map=18/${order.delivery_lat}/${order.delivery_lng}`}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-block pt-0.5 font-medium text-indigo-600 hover:underline"
+        >
+          🗺 {t('orders.openOnMap')}
+        </a>
+      )}
+    </div>
   );
 }
 
@@ -557,6 +639,12 @@ function ActiveOrderPanel({
   onReceiptStatus: (message: string) => void;
 }) {
   const { t } = useTranslation();
+  // Ofitsiant ham shu panelni ochadi, lekin pul bilan bog'liq tugmalarni
+  // ko'rmasligi kerak. Yashirish faqat qulaylik — backend baribir 403 beradi
+  // (routes.go: orders.pay / orders.discount).
+  const { can } = useAuth();
+  const canPay = can('orders.pay');
+  const canDiscount = can('orders.discount');
   const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: listCategories });
   const [selectedCategory, setSelectedCategory] = useState('');
   // Barcha mahsulotlar bir marta olinadi va kategoriya bo'yicha shu yerda filtrlanadi —
@@ -602,8 +690,9 @@ function ActiveOrderPanel({
   });
 
   const kitchenMutation = useMutation({
-    mutationFn: (status: 'preparing' | 'ready') => updateKitchenStatus(order!.id, status),
+    mutationFn: (status: KitchenStatus) => updateKitchenStatus(order!.id, status),
     onSuccess: onChanged,
+    onError: (err: any) => setError(err?.response?.data?.error ?? t('app.error')),
   });
 
   const discountMutation = useMutation({
@@ -691,6 +780,10 @@ function ActiveOrderPanel({
 
       <div className={`flex min-h-0 w-full flex-col ${table ? 'lg:w-80 xl:w-96' : ''}`}>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
+          {/* Mijoz ma'lumoti buyurtma qabul qilingandan **keyin** ham kerak:
+              kuryerni aynan shu bosqichda jo'natishadi va kassirga telefon,
+              manzil va xarita nuqtasi shu paytda kerak bo'ladi. */}
+          {order && <OnlineCustomerDetails order={order} />}
           <OrderItemsList order={order} onChanged={onChanged} />
 
           {draftLines.length > 0 && (
@@ -731,48 +824,59 @@ function ActiveOrderPanel({
 
           {order && (
             <>
+              <div className="flex flex-wrap gap-2">
+                {/* Yetkazib berish buyurtmasida bosqichlar ko'proq: mijoz
+                    o'z sahifasida "kuryerga berildi" va "yetkazildi" ni ham
+                    kutadi. Stolga/olib ketishda esa ikkitasi kifoya. */}
+                {kitchenStagesFor(order).map((stage) => (
+                  <button
+                    key={stage}
+                    onClick={() => kitchenMutation.mutate(stage)}
+                    disabled={kitchenMutation.isPending || order.kitchen_status === stage}
+                    className={`flex-1 rounded-lg px-3 py-2.5 text-xs font-medium disabled:opacity-100 ${
+                      order.kitchen_status === stage
+                        ? 'bg-slate-800 text-white'
+                        : 'border border-slate-300 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {t(`orders.kitchen.${stage}` as TranslationKey) ?? stage}
+                  </button>
+                ))}
+              </div>
               <div className="flex gap-2">
-                <button
-                  onClick={() =>
-                    kitchenMutation.mutate(order.kitchen_status === 'ready' ? 'preparing' : 'ready')
-                  }
-                  disabled={kitchenMutation.isPending}
-                  className={`flex-1 rounded-lg px-3 py-2.5 text-sm font-medium disabled:opacity-60 ${
-                    order.kitchen_status === 'ready'
-                      ? 'border border-amber-300 text-amber-700 hover:bg-amber-50'
-                      : 'border border-emerald-300 text-emerald-700 hover:bg-emerald-50'
-                  }`}
-                >
-                  {order.kitchen_status === 'ready'
-                    ? t('orders.markPreparing')
-                    : t('orders.markReady')}
-                </button>
-                <button
-                  onClick={handleDiscount}
-                  disabled={discountMutation.isPending}
-                  className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
-                >
-                  {t('orders.discount')}
-                </button>
+                {canDiscount && (
+                  <button
+                    onClick={handleDiscount}
+                    disabled={discountMutation.isPending}
+                    className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+                  >
+                    {t('orders.discount')}
+                  </button>
+                )}
               </div>
 
               {/* Chek to'lovdan mustaqil chiqariladi: hisob-faktura mijozga
-                  to'lovdan oldin beriladi (restoranda odatiy amaliyot). */}
-              <button
-                onClick={() => handlePrint(true)}
-                disabled={printing}
-                title={t('receipt.preBillHint')}
-                className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
-              >
-                🧾 {printing ? t('receipt.printing') : t('receipt.preBill')}
-              </button>
+                  to'lovdan oldin beriladi (restoranda odatiy amaliyot).
+                  Chek endpointi ham orders.pay vakolatini talab qiladi. */}
+              {canPay && (
+                <>
+                  <button
+                    onClick={() => handlePrint(true)}
+                    disabled={printing}
+                    title={t('receipt.preBillHint')}
+                    className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+                  >
+                    🧾 {printing ? t('receipt.printing') : t('receipt.preBill')}
+                  </button>
 
-              <button
-                onClick={onPay}
-                className="w-full rounded-lg bg-emerald-600 px-4 py-3 text-sm font-medium text-white hover:bg-emerald-700"
-              >
-                {t('orders.pay')} · {order.final_amount.toLocaleString()} {t('app.currency')}
-              </button>
+                  <button
+                    onClick={onPay}
+                    className="w-full rounded-lg bg-emerald-600 px-4 py-3 text-sm font-medium text-white hover:bg-emerald-700"
+                  >
+                    {t('orders.pay')} · {order.final_amount.toLocaleString()} {t('app.currency')}
+                  </button>
+                </>
+              )}
             </>
           )}
         </div>

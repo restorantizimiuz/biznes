@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"cafesystem/backend/internal/config"
+	"cafesystem/backend/internal/middleware"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
@@ -28,6 +29,13 @@ type LoginResponse struct {
 	FullName   string `json:"full_name"`
 	Role       string `json:"role"`
 	BusinessID string `json:"business_id"`
+	// Permissions - xodimning haqiqiy vakolatlari (rol standarti + shaxsiy
+	// o'zgartirishlar). Frontend menyuni shu ro'yxatga qarab chizadi.
+	//
+	// Token ichiga ataylab qo'yilmadi: admin ruxsatni o'zgartirsa, token
+	// muddati tugagunicha eski ro'yxat amal qilib turardi. Shuning uchun u
+	// javob tanasida beriladi va GET /api/v1/me orqali qayta o'qiladi.
+	Permissions map[string]bool `json:"permissions"`
 }
 
 // AuthHandler - autentifikatsiya bilan bog'liq barcha handler'lar shu struct orqali ishlaydi,
@@ -97,10 +105,11 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(LoginResponse{
-		Token:      signedToken,
-		UserID:     userID,
-		FullName:   fullName,
-		Role:       role,
-		BusinessID: businessID,
+		Token:       signedToken,
+		UserID:      userID,
+		FullName:    fullName,
+		Role:        role,
+		BusinessID:  businessID,
+		Permissions: middleware.EffectivePermissions(ctx, h.DB, userID, role),
 	})
 }

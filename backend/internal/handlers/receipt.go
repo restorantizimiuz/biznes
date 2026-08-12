@@ -39,20 +39,20 @@ type printerSettings struct {
 }
 
 type receiptDTO struct {
-	OrderID          string          `json:"order_id"`
-	BusinessName     string          `json:"business_name"`
-	TableName        *string         `json:"table_name"`
-	OrderType        string          `json:"order_type"`
-	CustomerPhone    *string         `json:"customer_phone"`
-	DeliveryAddress  *string         `json:"delivery_address"`
-	Items            []receiptItem   `json:"items"`
-	TotalAmount      float64         `json:"total_amount"`
-	DiscountAmount   float64         `json:"discount_amount"`
-	FinalAmount      float64         `json:"final_amount"`
-	PaymentMethods   []string        `json:"payment_methods"`
-	PaidAt           *time.Time      `json:"paid_at"`
-	CreatedAt        time.Time       `json:"created_at"`
-	TelegramUsername *string         `json:"telegram_username,omitempty"`
+	OrderID          string        `json:"order_id"`
+	BusinessName     string        `json:"business_name"`
+	TableName        *string       `json:"table_name"`
+	OrderType        string        `json:"order_type"`
+	CustomerPhone    *string       `json:"customer_phone"`
+	DeliveryAddress  *string       `json:"delivery_address"`
+	Items            []receiptItem `json:"items"`
+	TotalAmount      float64       `json:"total_amount"`
+	DiscountAmount   float64       `json:"discount_amount"`
+	FinalAmount      float64       `json:"final_amount"`
+	PaymentMethods   []string      `json:"payment_methods"`
+	PaidAt           *time.Time    `json:"paid_at"`
+	CreatedAt        time.Time     `json:"created_at"`
+	TelegramUsername *string       `json:"telegram_username,omitempty"`
 	// IsPreBill - to'lovdan **oldin** beriladigan hisob-faktura.
 	// Chekda "TO'LANMAGAN" deb belgilanadi, shunda uni to'langan chek bilan
 	// adashtirib bo'lmaydi.

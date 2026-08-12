@@ -4,34 +4,41 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { useTranslation } from '../i18n/LanguageContext';
 import type { TranslationKey } from '../i18n/dictionaries';
-import type { UserRole } from '../api/types';
+import type { PermissionKey, PermissionMap } from '../api/types';
 import { useOrderNotifications } from '../notifications/useOrderNotifications';
 import { getSettings } from '../api/endpoints';
 
-// Har bir bo'lim qaysi rollarga ko'rinishi.
+// Har bir bo'lim qaysi vakolat bilan ochilishi.
+//
+// Ilgari bu ro'yxat rollarga bog'langan edi (roles: UserRole[]), endi esa
+// vakolat kalitiga — chunki admin bir xil roldagi ikki xodimga turli ruxsat
+// bera oladi.
 //
 // MUHIM: bu ro'yxat faqat qulaylik uchun — menyuni yashirish himoya emas.
 // Haqiqiy himoya backendda (backend/internal/handlers/routes.go): endpoint
 // himoyalanmasa, ofitsiant brauzer konsolidan so'rov yuborib ma'lumotni
-// baribir olaverardi. Ikkala tomon bir xil jadvalga amal qiladi.
+// baribir olaverardi. Ikkala tomon bir xil kalitlarga amal qiladi.
 export const NAV_ITEMS: {
   to: string;
   labelKey: TranslationKey;
   icon: string;
-  roles: UserRole[];
+  permission: PermissionKey;
   end?: boolean;
 }[] = [
-  { to: '/', labelKey: 'nav.orders', icon: '🧾', roles: ['owner', 'admin', 'cashier'], end: true },
-  { to: '/menu', labelKey: 'nav.menu', icon: '🍽️', roles: ['owner', 'admin', 'waiter'] },
-  { to: '/tables', labelKey: 'nav.tables', icon: '🪑', roles: ['owner', 'admin', 'waiter'] },
-  { to: '/staff', labelKey: 'nav.staff', icon: '👥', roles: ['owner', 'admin'] },
-  { to: '/reports', labelKey: 'nav.reports', icon: '📊', roles: ['owner', 'admin', 'cashier'] },
-  { to: '/settings', labelKey: 'nav.settings', icon: '⚙️', roles: ['owner', 'admin'] },
+  { to: '/', labelKey: 'nav.orders', icon: '🧾', permission: 'orders.view', end: true },
+  { to: '/menu', labelKey: 'nav.menu', icon: '🍽️', permission: 'menu.view' },
+  { to: '/tables', labelKey: 'nav.tables', icon: '🪑', permission: 'tables.view' },
+  { to: '/staff', labelKey: 'nav.staff', icon: '👥', permission: 'staff.manage' },
+  { to: '/reports', labelKey: 'nav.reports', icon: '📊', permission: 'reports.view' },
+  { to: '/settings', labelKey: 'nav.settings', icon: '⚙️', permission: 'settings.edit' },
 ];
 
-/** Rol uchun ochiq bo'limlar. Login sahifasidan keyingi birinchi sahifa ham shundan olinadi. */
-export function navItemsForRole(role: string | undefined) {
-  return NAV_ITEMS.filter((item) => item.roles.includes(role as UserRole));
+/**
+ * Xodimga ochiq bo'limlar. Login sahifasidan keyingi birinchi sahifa ham
+ * shundan olinadi — shuning uchun ro'yxat tartibi muhim.
+ */
+export function navItemsForPermissions(permissions: PermissionMap | undefined) {
+  return NAV_ITEMS.filter((item) => permissions?.[item.permission] === true);
 }
 
 export default function Layout() {
@@ -48,7 +55,7 @@ export default function Layout() {
   // qiladi) sidebar'dagi kafe nomi ham avtomatik yangilanadi.
   const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: getSettings });
 
-  const items = navItemsForRole(auth?.role);
+  const items = navItemsForPermissions(auth?.permissions);
   const currentItem = items.find((item) =>
     item.end ? location.pathname === item.to : location.pathname.startsWith(item.to),
   );

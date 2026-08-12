@@ -13,8 +13,12 @@ export default function CategoryList({
   return (
     <div className="space-y-2.5 px-4 pt-2">
       {categories.map((category) => {
-        // Kategoriya uchun ko'rgazmali rasm — ichidagi birinchi rasmli taomdan olinadi
-        const cover = resolveImageUrl(category.products.find((p) => p.image_url)?.image_url ?? '');
+        // Kassada kategoriyaga rasm qo'yilgan bo'lsa o'sha ishlatiladi.
+        // Bo'lmasa — ichidagi birinchi rasmli taomdan olinadi, shunda
+        // rasm qo'yishga ulgurmagan kafening menyusi ham quruq qolmaydi.
+        const cover = resolveImageUrl(
+          category.image_url || (category.products.find((p) => p.image_url)?.image_url ?? ''),
+        );
         return (
           <button
             key={category.id}
@@ -39,8 +43,8 @@ export default function CategoryList({
               <p className="truncate text-[16px] font-semibold text-[var(--color-text)]">
                 {category.name}
               </p>
-              <p className="text-[12.5px] text-[var(--color-text-secondary)]">
-                {category.products.length} ta taom
+              <p className="truncate text-[12.5px] text-[var(--color-text-secondary)]">
+                {category.description || `${category.products.length} ta taom`}
               </p>
             </div>
             <span className="shrink-0 text-[var(--color-text-secondary)]">›</span>

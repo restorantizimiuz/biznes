@@ -31,3 +31,9 @@ Thumbs.db
 
 # Loglar
 *.log
+
+# Lokal ishga tushirish qoldiqlari (kodga tegishli emas)
+backend/*.err
+
+# Lokal mashinaga xos skript — ichida ochiq parol bor, repoga tushmasligi kerak
+reset-pg-password.ps1

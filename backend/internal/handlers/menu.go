@@ -16,8 +16,9 @@ type MenuHandler struct {
 func (h *MenuHandler) ListCategories(c *fiber.Ctx) error {
 	businessID := c.Locals("business_id").(string)
 	rows, err := h.DB.Query(context.Background(),
-		`SELECT id, name, sort_order, is_active FROM categories
-		 WHERE business_id=$1 AND is_deleted=false ORDER BY sort_order`, businessID)
+		`SELECT id, name, COALESCE(description, ''), COALESCE(image_url, ''), sort_order, is_active
+		 FROM categories
+		 WHERE business_id=$1 AND is_deleted=false ORDER BY sort_order, name`, businessID)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -26,7 +27,8 @@ func (h *MenuHandler) ListCategories(c *fiber.Ctx) error {
 	categories := []models.Category{}
 	for rows.Next() {
 		var cat models.Category
-		if err := rows.Scan(&cat.ID, &cat.Name, &cat.SortOrder, &cat.IsActive); err != nil {
+		if err := rows.Scan(&cat.ID, &cat.Name, &cat.Description, &cat.ImageURL,
+			&cat.SortOrder, &cat.IsActive); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 		}
 		cat.BusinessID = businessID
@@ -38,8 +40,10 @@ func (h *MenuHandler) ListCategories(c *fiber.Ctx) error {
 func (h *MenuHandler) CreateCategory(c *fiber.Ctx) error {
 	businessID := c.Locals("business_id").(string)
 	var body struct {
-		Name      string `json:"name"`
-		SortOrder int    `json:"sort_order"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		ImageURL    string `json:"image_url"`
+		SortOrder   int    `json:"sort_order"`
 	}
 	if err := c.BodyParser(&body); err != nil || body.Name == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "Kategoriya nomi kiritilishi shart"})
@@ -47,8 +51,9 @@ func (h *MenuHandler) CreateCategory(c *fiber.Ctx) error {
 
 	var id string
 	err := h.DB.QueryRow(context.Background(),
-		`INSERT INTO categories (business_id, name, sort_order) VALUES ($1,$2,$3) RETURNING id`,
-		businessID, body.Name, body.SortOrder,
+		`INSERT INTO categories (business_id, name, description, image_url, sort_order)
+		 VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+		businessID, body.Name, body.Description, body.ImageURL, body.SortOrder,
 	).Scan(&id)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
@@ -56,20 +61,35 @@ func (h *MenuHandler) CreateCategory(c *fiber.Ctx) error {
 	return c.Status(201).JSON(fiber.Map{"id": id})
 }
 
-// UpdateCategory - kategoriya nomini o'zgartirish
+// UpdateCategory - kategoriya nomi, izohi, rasmi, tartibi va faolligini
+// o'zgartirish.
+//
+// is_active=false qilingan kategoriya mijoz menyusidan yashiriladi, lekin
+// kassa panelida qoladi — mavsumiy taomlarni butunlay o'chirmasdan vaqtincha
+// yopish uchun (o'chirish esa ichidagi mahsulotlarni ham yo'qotardi).
 func (h *MenuHandler) UpdateCategory(c *fiber.Ctx) error {
 	businessID := c.Locals("business_id").(string)
 	categoryID := c.Params("id")
 	var body struct {
-		Name string `json:"name"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		ImageURL    string `json:"image_url"`
+		SortOrder   int    `json:"sort_order"`
+		IsActive    *bool  `json:"is_active"`
 	}
 	if err := c.BodyParser(&body); err != nil || body.Name == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "Kategoriya nomi kiritilishi shart"})
 	}
 
+	isActive := true
+	if body.IsActive != nil {
+		isActive = *body.IsActive
+	}
+
 	cmd, err := h.DB.Exec(context.Background(),
-		`UPDATE categories SET name=$1 WHERE id=$2 AND business_id=$3 AND is_deleted=false`,
-		body.Name, categoryID, businessID)
+		`UPDATE categories SET name=$1, description=$2, image_url=$3, sort_order=$4, is_active=$5
+		 WHERE id=$6 AND business_id=$7 AND is_deleted=false`,
+		body.Name, body.Description, body.ImageURL, body.SortOrder, isActive, categoryID, businessID)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}

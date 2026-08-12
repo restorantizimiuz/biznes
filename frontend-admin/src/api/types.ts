@@ -1,15 +1,70 @@
+/**
+ * Vakolat kalitlari — backenddagi middleware/permission.go bilan **aynan**
+ * bir xil bo'lishi shart. Rol endi faqat standart to'plamni beradi, admin esa
+ * har bir xodimga alohida ruxsat berishi yoki olib qo'yishi mumkin.
+ */
+export const PERMISSIONS = [
+  'orders.view',
+  'orders.create',
+  'orders.edit',
+  'orders.pay',
+  'orders.cancel',
+  'orders.discount',
+  'menu.view',
+  'menu.edit',
+  'tables.view',
+  'tables.edit',
+  'staff.manage',
+  'reports.view',
+  'reports.export',
+  'settings.edit',
+] as const;
+
+export type PermissionKey = (typeof PERMISSIONS)[number];
+
+export type PermissionMap = Partial<Record<PermissionKey, boolean>>;
+
 export interface LoginResponse {
   token: string;
   user_id: string;
   full_name: string;
   role: string;
   business_id: string;
+  permissions: PermissionMap;
+}
+
+/** GET /me — sahifa ochilganda vakolatlarni yangilash uchun. */
+export interface MeResponse {
+  user_id: string;
+  business_id: string;
+  full_name: string;
+  login: string;
+  role: string;
+  permissions: PermissionMap;
+}
+
+/**
+ * Xodimning vakolatlari uch qismdan iborat:
+ *  defaults  — rol standarti
+ *  overrides — shu xodim uchun qo'lda o'rnatilganlari
+ *  effective — yakuniysi (defaults ustiga overrides qo'yilgan)
+ * Interfeys uchtasini ham ishlatadi: har bir vakolat uch holatli tugma bilan
+ * ko'rsatiladi (rol standarti / ruxsat berilgan / taqiqlangan).
+ */
+export interface StaffPermissions {
+  role: string;
+  all: PermissionKey[];
+  defaults: PermissionMap;
+  overrides: PermissionMap;
+  effective: PermissionMap;
 }
 
 export interface Category {
   id: string;
   business_id: string;
   name: string;
+  description: string;
+  image_url: string;
   sort_order: number;
   is_active: boolean;
 }
@@ -47,16 +102,27 @@ export interface OrderItem {
 
 export type OrderType = 'dine_in' | 'delivery' | 'pickup';
 
+/**
+ * Tayyorlash bosqichi. 'delivering' va 'delivered' faqat yetkazib berish
+ * buyurtmalarida ishlatiladi — backend order_type ga qarab tekshiradi.
+ */
+export type KitchenStatus = 'preparing' | 'ready' | 'delivering' | 'delivered';
+
 export interface ActiveOrder {
   id: string;
   table_id: string | null;
   table_name: string | null;
   source: string;
   status: 'new' | 'activated' | 'paid' | 'cancelled';
-  kitchen_status: 'preparing' | 'ready';
+  kitchen_status: KitchenStatus;
   order_type: OrderType;
+  customer_name: string | null;
   customer_phone: string | null;
   delivery_address: string | null;
+  delivery_note: string | null;
+  delivery_lat: number | null;
+  delivery_lng: number | null;
+  preferred_payment_method: string | null;
   total_amount: number;
   discount_amount: number;
   final_amount: number;
@@ -120,6 +186,7 @@ export interface DailySummary {
 
 export interface Settings {
   name: string;
+  business_code: string;
   language: string;
   theme_mode: string;
   subscription_plan: SubscriptionPlan;
@@ -129,7 +196,14 @@ export interface Settings {
   printer_address: string;
   printer_paper_width: number;
   notify_sound: boolean;
+  /** Yetkazib berish uchun eng kam summa (0 = cheklov yo'q). */
+  min_order_amount: number;
   features: Record<string, boolean>;
+  /**
+   * Kafe Instagram profiliga qo'yadigan ochiq menyu havolasi.
+   * Backendda yig'iladi (WEB_MENU_BASE_URL) — frontend deploy domenini bilmaydi.
+   */
+  web_menu_url: string;
 }
 
 export type SubscriptionPlan = 'basic' | 'qr' | 'full';

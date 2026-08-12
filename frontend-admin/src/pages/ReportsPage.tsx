@@ -42,12 +42,17 @@ const STATUS_TONE: Record<string, string> = {
 
 export default function ReportsPage() {
   const { t } = useTranslation();
-  const { auth } = useAuth();
+  const { can } = useAuth();
   const queryClient = useQueryClient();
 
-  // Faqat kafe egasi va admin yopilgan buyurtmani tuzata oladi — bu moliyaviy
-  // yozuvni o'zgartirish. Kassir hisobotni ko'radi, lekin tahrirlay olmaydi.
-  const canEdit = auth?.role === 'owner' || auth?.role === 'admin';
+  // Yopilgan buyurtmani tuzatish — moliyaviy yozuvni o'zgartirish, shuning
+  // uchun u xodim boshqarish vakolati bilan bir xil darajada turadi
+  // (backendda ham aynan shu kalit tekshiriladi: routes.go dagi closedEdit).
+  // Kassir hisobotni ko'radi, lekin tahrirlay olmaydi.
+  const canEdit = can('staff.manage');
+
+  // Excel yuklash alohida vakolat — tugmani shunga qarab yashiramiz.
+  const canExport = can('reports.export');
 
   const [filters, setFilters] = useState<ReportFilters>({ from: todayISO(), to: todayISO() });
   const [openOrder, setOpenOrder] = useState<ReportOrder | null>(null);
@@ -109,13 +114,15 @@ export default function ReportsPage() {
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
             />
           </label>
-          <button
-            onClick={() => exportMutation.mutate()}
-            disabled={exportMutation.isPending}
-            className="ml-auto rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
-          >
-            {exportMutation.isPending ? t('app.loading') : t('reports.export')}
-          </button>
+          {canExport && (
+            <button
+              onClick={() => exportMutation.mutate()}
+              disabled={exportMutation.isPending}
+              className="ml-auto rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+            >
+              {exportMutation.isPending ? t('app.loading') : t('reports.export')}
+            </button>
+          )}
         </div>
 
         <div className="flex flex-wrap items-end gap-3 border-t border-slate-100 pt-3">

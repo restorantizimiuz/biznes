@@ -1,26 +1,35 @@
 package handlers
 
 import (
+	"time"
+
 	"cafesystem/backend/internal/config"
 	"cafesystem/backend/internal/middleware"
 	"cafesystem/backend/internal/notify"
 
 	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
 
-// Rollar bo'yicha ruxsatlar (kelishilgan jadval):
+// Ruxsatlar endi **rolga emas, vakolat kalitiga** bog'langan
+// (middleware/permission.go). Rol faqat standart to'plamni beradi, admin esa
+// har bir xodimga alohida ruxsat berishi yoki olib qo'yishi mumkin.
 //
-//	Bo'lim                    | owner | admin | cashier | waiter
-//	--------------------------|-------|-------|---------|-------
-//	Kassa (buyurtma, to'lov)  |   ✅  |   ✅  |    ✅   |   ❌
-//	Menyu (o'zgartirish)      |   ✅  |   ✅  |    ❌   |   ✅
-//	Stollar (o'zgartirish)    |   ✅  |   ✅  |    ❌   |   ✅
-//	Xodimlar                  |   ✅  |   ✅  |    ❌   |   ❌
-//	Hisobot                   |   ✅  |   ✅  |    ✅   |   ❌
-//	Sozlamalar                |   ✅  |   ✅  |    ❌   |   ❌
+// Standart to'plam:
+//
+//	Vakolat            | owner | admin | cashier | waiter
+//	-------------------|-------|-------|---------|-------
+//	orders.view        |   ✅  |   ✅  |    ✅   |   ✅
+//	orders.create/edit |   ✅  |   ✅  |    ✅   |   ✅
+//	orders.pay/cancel  |   ✅  |   ✅  |    ✅   |   ❌
+//	menu.edit          |   ✅  |   ✅  |    ❌   |   ✅
+//	tables.edit        |   ✅  |   ✅  |    ❌   |   ✅
+//	staff.manage       |   ✅  |   ✅  |    ❌   |   ❌
+//	reports.view       |   ✅  |   ✅  |    ✅   |   ❌
+//	settings.edit      |   ✅  |   ✅  |    ❌   |   ❌
 //
 // MUHIM: frontendda menyuni yashirish faqat qulaylik. Haqiqiy himoya shu
 // yerda — endpoint himoyalanmasa, ofitsiant brauzer konsolidan so'rov
@@ -29,11 +38,6 @@ import (
 // O'qish (GET) huquqi ataylab kengroq: kassir menyuni va stollarni ko'rmasa
 // buyurtma kirita olmaydi, har bir xodim esa til sozlamasini o'qishi kerak.
 // Cheklov yozish amallariga qo'yiladi.
-var (
-	rolesManage  = []string{"owner", "admin"}                      // boshqaruv
-	rolesCashier = []string{"owner", "admin", "cashier"}            // kassa va hisobot
-	rolesMenu    = []string{"owner", "admin", "waiter"}             // menyu va stollarni tahrirlash
-)
 
 // RegisterRoutes butun tizimning API yo'llarini belgilaydi.
 // Har bir bo'lim (auth, menu, orders, tables, reports...) alohida guruhga bo'lingan,
@@ -53,13 +57,42 @@ func RegisterRoutes(app *fiber.App, db *pgxpool.Pool, rdb *redis.Client, hub *no
 	// Telegram bot /start orqali (hali stol tanlanmagan holatda) menyuni ko'rsatish uchun ochiq endpoint
 	api.Get("/menu", qr.GetMenuByBusinessCode)
 
-	// Telegram WebApp orqali stoldan buyurtma (mijoz Telegram initData bilan autentifikatsiya qilinadi,
-	// login shart emas). Menyuni olish uchun yuqoridagi /qr/:table_token/menu qayta ishlatiladi.
+	// Telegram WebApp orqali **stoldan** buyurtma (mijoz Telegram initData bilan
+	// autentifikatsiya qilinadi, login shart emas). Menyuni olish uchun yuqoridagi
+	// /qr/:table_token/menu qayta ishlatiladi.
+	//
+	// Telegram orqali uydan (yetkazib berish/olib ketish) buyurtma berish olib
+	// tashlandi — u endi quyidagi ochiq veb sahifa orqali amalga oshiriladi.
 	telegram := &TelegramHandler{DB: db, RDB: rdb, Hub: hub, Cfg: cfg}
-	// Diqqat: aniq yo'l (/telegram/order) parametrli yo'ldan (/telegram/:table_token/order)
-	// oldin turishi shart emas — ular turli shaklda, lekin tartib aniqlik uchun shunday.
-	api.Post("/telegram/order", telegram.CreateOnlineOrder)
 	api.Post("/telegram/:table_token/order", telegram.CreateOrder)
+
+	// ---------- Ochiq veb sahifa (Instagram havolasi) ----------
+	// Mijoz uyda o'tirib menyuni ko'radi va buyurtma beradi. Auth yo'q:
+	// hisob ochish talab qilinsa mijozlarning katta qismi yo'qoladi.
+	//
+	// Soxta buyurtmaga qarshi uch qatlam:
+	//   1) IP bo'yicha chastota chegarasi (shu yerda),
+	//   2) bir telefondan ochiq buyurtma soni (weborder.go),
+	//   3) buyurtma 'new' holatida tushadi — kassir tasdiqlamaguncha
+	//      oshxonaga ketmaydi.
+	web := &WebOrderHandler{DB: db, RDB: rdb, Hub: hub, Cfg: cfg}
+	api.Post("/web/order", limiter.New(limiter.Config{
+		Max:        5,
+		Expiration: time.Minute,
+		LimitReached: func(c *fiber.Ctx) error {
+			return c.Status(429).JSON(fiber.Map{
+				"error": "Juda ko'p urinish. Bir daqiqadan so'ng qayta urinib ko'ring.",
+			})
+		},
+	}), web.CreateWebOrder)
+	api.Get("/web/orders/:token", web.GetWebOrderStatus)
+
+	// Manzilni xaritadagi nuqtadan aniqlash (OpenStreetMap Nominatim proksi).
+	geo := &GeoHandler{Cfg: cfg}
+	api.Get("/geo/reverse", limiter.New(limiter.Config{
+		Max:        30,
+		Expiration: time.Minute,
+	}), geo.ReverseGeocode)
 
 	// ---------- Real-time bildirishnoma (WebSocket) ----------
 	// Token sarlavhada emas, so'rov parametrida keladi (brauzer WebSocket API'si
@@ -93,84 +126,111 @@ func RegisterRoutes(app *fiber.App, db *pgxpool.Pool, rdb *redis.Client, hub *no
 	// ---------- Himoyalangan yo'llar (kafe tokeni talab qilinadi) ----------
 	protected := api.Group("/", middleware.AuthRequired(cfg.JWTSecret))
 
+	// Joriy xodim haqida — frontend menyuni shu javobdagi vakolatlarga qarab
+	// chizadi. Alohida endpoint kerak, chunki admin ruxsatni o'zgartirganda
+	// login javobidagi ro'yxat eskirib qoladi.
+	me := &MeHandler{DB: db}
+	protected.Get("/me", me.Me)
+
 	// Menyu boshqaruvi (kategoriya, mahsulot).
 	// O'qish barcha rollarga ochiq — kassir menyusiz buyurtma kirita olmaydi.
 	menu := &MenuHandler{DB: db}
+	menuEdit := middleware.RequirePermission(db, middleware.PermMenuEdit)
 	protected.Get("/menu/categories", menu.ListCategories)
-	protected.Post("/menu/categories", middleware.RequireRole(rolesMenu...), menu.CreateCategory)
-	protected.Patch("/menu/categories/:id", middleware.RequireRole(rolesMenu...), menu.UpdateCategory)
-	protected.Delete("/menu/categories/:id", middleware.RequireRole(rolesMenu...), menu.DeleteCategory)
+	protected.Post("/menu/categories", menuEdit, menu.CreateCategory)
+	protected.Patch("/menu/categories/:id", menuEdit, menu.UpdateCategory)
+	protected.Delete("/menu/categories/:id", menuEdit, menu.DeleteCategory)
 	protected.Get("/menu/products", menu.ListProducts)
-	protected.Post("/menu/products", middleware.RequireRole(rolesMenu...), menu.CreateProduct)
-	protected.Patch("/menu/products/:id/availability", middleware.RequireRole(rolesMenu...), menu.ToggleProductAvailability)
-	protected.Patch("/menu/products/:id", middleware.RequireRole(rolesMenu...), menu.UpdateProduct)
-	protected.Delete("/menu/products/:id", middleware.RequireRole(rolesMenu...), menu.DeleteProduct)
+	protected.Post("/menu/products", menuEdit, menu.CreateProduct)
+	protected.Patch("/menu/products/:id/availability", menuEdit, menu.ToggleProductAvailability)
+	protected.Patch("/menu/products/:id", menuEdit, menu.UpdateProduct)
+	protected.Delete("/menu/products/:id", menuEdit, menu.DeleteProduct)
 
-	// Mahsulot rasmlarini yuklash (qurilmadan tanlab, kesib yuboriladi)
+	// Rasm yuklash: menyu yoki stol tahrirlay oladigan xodimga ochiq.
+	// Ikkalasidan biri yetarli — rasm ikkala bo'limda ham ishlatiladi.
 	uploads := &UploadHandler{Cfg: cfg}
-	protected.Post("/uploads/image", middleware.RequireRole(rolesMenu...), uploads.UploadImage)
+	protected.Post("/uploads/image",
+		middleware.RequireAnyPermission(db, middleware.PermMenuEdit, middleware.PermTablesEdit),
+		uploads.UploadImage)
 
 	// Qavat va stollar
 	tables := &TableHandler{DB: db}
+	tablesEdit := middleware.RequirePermission(db, middleware.PermTablesEdit)
 	protected.Get("/floors", tables.ListFloors)
-	protected.Post("/floors", middleware.RequireRole(rolesMenu...), tables.CreateFloor)
-	protected.Patch("/floors/:id", middleware.RequireRole(rolesMenu...), tables.UpdateFloor)
-	protected.Delete("/floors/:id", middleware.RequireRole(rolesMenu...), tables.DeleteFloor)
+	protected.Post("/floors", tablesEdit, tables.CreateFloor)
+	protected.Patch("/floors/:id", tablesEdit, tables.UpdateFloor)
+	protected.Delete("/floors/:id", tablesEdit, tables.DeleteFloor)
 	protected.Get("/floors/:floor_id/tables", tables.ListTables)
-	protected.Post("/floors/:floor_id/tables", middleware.RequireRole(rolesMenu...), tables.CreateTable)
-	protected.Patch("/tables/:id", middleware.RequireRole(rolesMenu...), tables.UpdateTable)
-	protected.Delete("/tables/:id", middleware.RequireRole(rolesMenu...), tables.DeleteTable)
+	protected.Post("/floors/:floor_id/tables", tablesEdit, tables.CreateTable)
+	protected.Patch("/tables/:id", tablesEdit, tables.UpdateTable)
+	protected.Delete("/tables/:id", tablesEdit, tables.DeleteTable)
 	protected.Get("/tables/:id/qr", tables.GetTableQRCode)
 
-	// Kassa: buyurtmalar — ofitsiantga ko'rinmaydi.
+	// Buyurtmalar. Ofitsiant endi shu yerga kiradi (avval kira olmasdi), lekin
+	// pul bilan bog'liq amallar — to'lov, bekor qilish, chegirma — alohida
+	// vakolat talab qiladi va unga standart holda berilmaydi.
 	orders := &OrderHandler{DB: db, RDB: rdb, Hub: hub}
-	cashRegister := protected.Group("/orders", middleware.RequireRole(rolesCashier...))
-	cashRegister.Get("/", orders.ListActiveOrders)
-	cashRegister.Post("/", orders.CreateOrder)
-	cashRegister.Post("/:id/activate", orders.ActivateOrder)
-	cashRegister.Post("/:id/kitchen-status", orders.UpdateKitchenStatus)
-	cashRegister.Post("/:id/items", orders.AddItem)
-	cashRegister.Patch("/:id/items/:item_id", orders.UpdateOrderItem)
-	cashRegister.Delete("/:id/items/:item_id", orders.DeleteOrderItem)
-	cashRegister.Post("/:id/pay", orders.PayOrder)
-	cashRegister.Post("/:id/cancel", orders.CancelOrder)
-	cashRegister.Post("/:id/discount", orders.ApplyDiscount)
+	orderGroup := protected.Group("/orders", middleware.RequirePermission(db, middleware.PermOrdersView))
+	orderGroup.Get("/", orders.ListActiveOrders)
+	orderGroup.Post("/", middleware.RequirePermission(db, middleware.PermOrdersCreate), orders.CreateOrder)
+
+	orderEdit := middleware.RequirePermission(db, middleware.PermOrdersEdit)
+	orderGroup.Post("/:id/activate", orderEdit, orders.ActivateOrder)
+	orderGroup.Post("/:id/kitchen-status", orderEdit, orders.UpdateKitchenStatus)
+	orderGroup.Post("/:id/items", orderEdit, orders.AddItem)
+	orderGroup.Patch("/:id/items/:item_id", orderEdit, orders.UpdateOrderItem)
+	orderGroup.Delete("/:id/items/:item_id", orderEdit, orders.DeleteOrderItem)
+
+	orderGroup.Post("/:id/pay", middleware.RequirePermission(db, middleware.PermOrdersPay), orders.PayOrder)
+	orderGroup.Post("/:id/cancel", middleware.RequirePermission(db, middleware.PermOrdersCancel), orders.CancelOrder)
+	orderGroup.Post("/:id/discount", middleware.RequirePermission(db, middleware.PermOrdersDiscount), orders.ApplyDiscount)
 
 	// Chek: chop etish uchun ma'lumot yoki Telegram orqali yuborish (printer bo'lmaganda).
 	// Chek chiqarish alohida funksiya sifatida super-admin tomonidan o'chirilishi mumkin.
 	receipts := &ReceiptHandler{DB: db, Cfg: cfg}
-	receiptGroup := protected.Group("/orders/:id", middleware.RequireRole(rolesCashier...),
+	receiptGroup := protected.Group("/orders/:id",
+		middleware.RequirePermission(db, middleware.PermOrdersPay),
 		middleware.RequireFeature(db, middleware.FeatureReceiptPrint))
 	receiptGroup.Get("/receipt", receipts.GetReceipt)
 	receiptGroup.Post("/receipt-printed", receipts.MarkReceiptPrinted)
 	receiptGroup.Post("/send-receipt-telegram", receipts.SendReceiptTelegram)
-	protected.Get("/printer/test-receipt", middleware.RequireRole(rolesCashier...), receipts.TestReceipt)
+	protected.Get("/printer/test-receipt",
+		middleware.RequirePermission(db, middleware.PermOrdersPay), receipts.TestReceipt)
 
 	// Xodimlar (ofitsiant/kassir boshqaruvi)
 	staff := &StaffHandler{DB: db}
-	protected.Get("/staff", middleware.RequireRole(rolesManage...), staff.ListStaff)
-	protected.Post("/staff", middleware.RequireRole(rolesManage...), staff.CreateStaff)
-	protected.Delete("/staff/:id", middleware.RequireRole(rolesManage...), staff.DeleteStaff)
+	staffManage := middleware.RequirePermission(db, middleware.PermStaffManage)
+	protected.Get("/staff", staffManage, staff.ListStaff)
+	protected.Post("/staff", staffManage, staff.CreateStaff)
+	protected.Get("/staff/:id", staffManage, staff.GetStaff)
+	protected.Patch("/staff/:id", staffManage, staff.UpdateStaff)
+	protected.Delete("/staff/:id", staffManage, staff.DeleteStaff)
+	protected.Get("/staff/:id/permissions", staffManage, staff.GetStaffPermissions)
+	protected.Put("/staff/:id/permissions", staffManage, staff.UpdateStaffPermissions)
 
 	// Hisobot — moliyaviy ma'lumot, shuning uchun ofitsiantga berilmaydi.
 	reports := &ReportHandler{DB: db}
-	reportGroup := protected.Group("/reports", middleware.RequireRole(rolesCashier...))
+	reportGroup := protected.Group("/reports", middleware.RequirePermission(db, middleware.PermReportsView))
 	reportGroup.Get("/daily", reports.DailySummary)
 	reportGroup.Get("/detailed", reports.DetailedReport)
-	reportGroup.Get("/export", middleware.RequireFeature(db, middleware.FeatureReportExport), reports.ExportExcel)
+	reportGroup.Get("/export",
+		middleware.RequirePermission(db, middleware.PermReportsExport),
+		middleware.RequireFeature(db, middleware.FeatureReportExport), reports.ExportExcel)
 
-	// Yopilgan buyurtmani tahrirlash — faqat owner/admin.
-	// Kassir hisobotni ko'radi, lekin o'zi yopgan hisobni keyin o'zgartira
-	// olmaydi: aks holda nazorat ma'nosini yo'qotardi.
-	closedEdit := reportGroup.Group("/orders/:id", middleware.RequireRole(rolesManage...))
+	// Yopilgan buyurtmani tahrirlash. Kassir hisobotni ko'radi, lekin o'zi
+	// yopgan hisobni keyin o'zgartira olmaydi: aks holda nazorat ma'nosini
+	// yo'qotardi. Shuning uchun bu yerda staff.manage talab qilinadi —
+	// u faqat owner/admin da bor.
+	closedEdit := reportGroup.Group("/orders/:id", middleware.RequirePermission(db, middleware.PermStaffManage))
 	closedEdit.Patch("/payment", reports.UpdateOrderPayment)
 	closedEdit.Post("/items", reports.AddClosedOrderItem)
 	closedEdit.Delete("/items/:item_id", reports.DeleteClosedOrderItem)
 	closedEdit.Post("/revert", reports.RevertOrder)
 
 	// Sozlamalar. O'qish barchaga ochiq — interfeys tili shu javobdan olinadi.
-	settings := &SettingsHandler{DB: db}
+	settings := &SettingsHandler{DB: db, Cfg: cfg}
+	settingsEdit := middleware.RequirePermission(db, middleware.PermSettingsEdit)
 	protected.Get("/settings", settings.GetSettings)
-	protected.Patch("/settings", middleware.RequireRole(rolesManage...), settings.UpdateSettings)
-	protected.Post("/settings/subscription", middleware.RequireRole(rolesManage...), settings.UpdateSubscription)
+	protected.Patch("/settings", settingsEdit, settings.UpdateSettings)
+	protected.Post("/settings/subscription", settingsEdit, settings.UpdateSubscription)
 }

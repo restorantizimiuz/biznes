@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import QRCode from 'qrcode';
 import {
   getSettings,
   getTestReceipt,
@@ -24,6 +25,7 @@ export default function SettingsPage() {
   const [printerAddress, setPrinterAddress] = useState('');
   const [paperWidth, setPaperWidth] = useState(32);
   const [notifySound, setNotifySound] = useState(true);
+  const [minOrderAmount, setMinOrderAmount] = useState('0');
   const [message, setMessage] = useState<string | null>(null);
 
   // Serverdan kelgan qiymatlar bir marta formaga ko'chiriladi. Keyingi
@@ -37,6 +39,7 @@ export default function SettingsPage() {
     setPrinterAddress(settings.printer_address);
     setPaperWidth(settings.printer_paper_width);
     setNotifySound(settings.notify_sound);
+    setMinOrderAmount(String(settings.min_order_amount ?? 0));
   }, [settings]);
 
   const saveMutation = useMutation({
@@ -48,6 +51,7 @@ export default function SettingsPage() {
         printer_address: printerAddress.trim(),
         printer_paper_width: paperWidth,
         notify_sound: notifySound,
+        min_order_amount: Number(minOrderAmount) || 0,
       }),
     // ['settings'] so'rovi LanguageProvider va bildirishnoma moduli tomonidan
     // ham ishlatiladi — saqlangan zahoti butun interfeys yangilanadi.
@@ -114,6 +118,13 @@ export default function SettingsPage() {
           <span className="mt-1 block text-xs text-slate-400">{t('settings.languageNote')}</span>
         </label>
       </section>
+
+      {/* --- Online buyurtma havolasi --- */}
+      <OnlineOrderSection
+        webMenuUrl={settings.web_menu_url}
+        minOrderAmount={minOrderAmount}
+        onMinOrderChange={setMinOrderAmount}
+      />
 
       {/* --- Chek printeri --- */}
       <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -242,5 +253,104 @@ export default function SettingsPage() {
         <p className="text-xs text-amber-700">💳 {t('settings.paymentRequired')}</p>
       </section>
     </div>
+  );
+}
+
+/**
+ * ONLINE BUYURTMA HAVOLASI.
+ *
+ * Kafe shu havolani Instagram profiliga (yoki "bio"ga) qo'yadi — mijoz uni
+ * bosib, uyda o'tirib menyuni ko'radi va buyurtma beradi. Havola backendda
+ * yig'iladi (WEB_MENU_BASE_URL), chunki frontend deploy domenini bilmaydi.
+ *
+ * QR kod ham chiziladi: kafe uni varaqa, stol ustidagi ko'rgazma yoki
+ * eshikdagi stikerga chiqarishi mumkin.
+ */
+function OnlineOrderSection({
+  webMenuUrl,
+  minOrderAmount,
+  onMinOrderChange,
+}: {
+  webMenuUrl: string;
+  minOrderAmount: string;
+  onMinOrderChange: (value: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [qr, setQr] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!webMenuUrl) return;
+    QRCode.toDataURL(webMenuUrl, { width: 220, margin: 1 })
+      .then(setQr)
+      .catch(() => setQr(''));
+  }, [webMenuUrl]);
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(webMenuUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard API HTTPS'siz muhitda ishlamasligi mumkin — bunday holda
+      // foydalanuvchi havolani qo'lda nusxalaydi, shuning uchun u matn
+      // sifatida ham to'liq ko'rsatilgan.
+    }
+  }
+
+  if (!webMenuUrl) return null;
+
+  return (
+    <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div>
+        <h2 className="text-sm font-semibold text-slate-800">{t('settings.onlineOrder')}</h2>
+        <p className="mt-1 text-xs text-slate-500">{t('settings.onlineOrderHint')}</p>
+      </div>
+
+      <div className="flex flex-wrap items-start gap-4">
+        {qr && (
+          <img
+            src={qr}
+            alt={t('settings.onlineOrderLink')}
+            className="h-28 w-28 shrink-0 rounded-lg border border-slate-200"
+          />
+        )}
+        <div className="min-w-0 flex-1 space-y-2">
+          <p className="break-all rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700">
+            {webMenuUrl}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={handleCopy}
+              className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-900"
+            >
+              {copied ? t('settings.copied') : t('settings.copyLink')}
+            </button>
+            <a
+              href={webMenuUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            >
+              {t('settings.openLink')}
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <label className="block">
+        <span className="mb-1 block text-xs font-medium text-slate-600">
+          {t('settings.minOrderAmount')}
+        </span>
+        <input
+          type="number"
+          min={0}
+          value={minOrderAmount}
+          onChange={(e) => onMinOrderChange(e.target.value)}
+          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        />
+        <span className="mt-1 block text-xs text-slate-400">{t('settings.minOrderAmountHint')}</span>
+      </label>
+    </section>
   );
 }
