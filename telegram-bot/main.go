@@ -160,20 +160,22 @@ func parseStartTableToken(text string) string {
 //     Havolaga ?table=<token> qo'shiladi va ilova stol rejimida ochiladi:
 //     menyu va stolning joriy hisobi. Stolda o'tirgan mijozga aynan shu kerak.
 //
-//  2. ODDIY /start — WebApp emas, **oddiy havola** yuboriladi. Sabab: uydan
-//     buyurtma berish Telegram'dan olib tashlandi (u initData imzosini talab
-//     qilardi va bot tokenisiz umuman ishlamasdi). Endi u ochiq veb sahifada:
-//     <WEB_MENU_URL>/menyu/<business_code>. Mijoz uni brauzerda ochadi,
-//     manzilini xaritadan belgilaydi va buyurtma beradi.
+//  2. ODDIY /start — uydan buyurtma sahifasi ham WebApp tugmasi bilan
+//     yuboriladi, shunda tugma Telegram ichida (Mini App) ochiladi, tashqi
+//     brauzerga chiqib ketmaydi. Havolaning o'zi (<WEB_MENU_URL>/menyu/<code>)
+//     baribir oddiy HTTPS sahifa bo'lib qoladi — initData talab qilmaydi,
+//     shuning uchun uni mijoz nusxalab do'stiga yuborsa yoki Instagram'dan
+//     ochsa, u yerda oddiy brauzer sahifasi sifatida ishlayveradi. Faqat
+//     botning o'z chatidagi tugma xatti-harakati o'zgardi — link emas.
 func handleStart(token, webAppURL, webMenuURL, businessCode string, chatID int64, tableToken string) error {
-	// Stolsiz /start — ochiq veb menyu havolasi.
+	// Stolsiz /start — ochiq veb menyu, lekin Telegram ichida WebApp sifatida.
 	if tableToken == "" {
 		link := strings.TrimSuffix(webMenuURL, "/") + "/menyu/" + businessCode
 		text := "Assalomu alaykum! 👋\n\n" +
-			"Uydan buyurtma berish uchun menyumizni oching:\n" + link + "\n\n" +
+			"Uydan buyurtma berish uchun menyumizni oching.\n\n" +
 			"Restoranda o'tirgan bo'lsangiz, stolingizdagi QR kodni skanerlang — " +
 			"shunda stolingiz hisobi ham ko'rinadi."
-		return sendMessageWithLink(token, chatID, text, "🍽️ Menyuni ochish", link)
+		return sendMessageWithWebApp(token, chatID, text, "🍽️ Menyuni ochish", link)
 	}
 
 	appURL := webAppURL
@@ -190,26 +192,6 @@ func handleStart(token, webAppURL, webMenuURL, businessCode string, chatID int64
 	welcomeText := "Assalomu alaykum! 👋\n\n" +
 		"Stolingiz menyusi tayyor. Buyurtma berish va hisobingizni ko'rish uchun oching."
 	return sendMessageWithWebApp(token, chatID, welcomeText, "🍽️ Menyu va hisob", appURL)
-}
-
-// sendMessageWithLink - oddiy URL tugmasi (WebApp emas).
-//
-// WebApp tugmasidan farqi: u brauzerda ochiladi va HTTPS domen talab qilmaydi
-// (Telegram WebApp esa faqat HTTPS'da ishlaydi). Uydan buyurtma sahifasi
-// Telegram ichida ochilishi shart emas — aksincha, mijoz havolani do'stlariga
-// yuborishi yoki Instagram'dan kirishi mumkin.
-func sendMessageWithLink(token string, chatID int64, text, buttonText, link string) error {
-	payload := map[string]any{
-		"chat_id":                  chatID,
-		"text":                     text,
-		"disable_web_page_preview": true,
-		"reply_markup": map[string]any{
-			"inline_keyboard": [][]map[string]any{
-				{{"text": buttonText, "url": link}},
-			},
-		},
-	}
-	return callTelegramAPI(token, "sendMessage", payload, nil)
 }
 
 // sendMessageWithWebApp - Telegram Bot API'ning "web_app" tugma turidan foydalanadi:

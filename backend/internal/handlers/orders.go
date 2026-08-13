@@ -68,6 +68,20 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 	}
 	defer tx.Rollback(ctx)
 
+	// Stol shu kafega tegishli ekanini tekshiramiz — aks holda boshqa
+	// kafening (business_id) stol UUID'sini yuborib, uning stol holatini
+	// masofadan o'zgartirish mumkin bo'lardi (business_id tekshiruvisiz
+	// table_id to'g'ridan-to'g'ri ishonilgan edi).
+	if req.TableID != "" {
+		var exists string
+		if err := tx.QueryRow(ctx,
+			`SELECT t.id FROM tables t JOIN floors f ON f.id = t.floor_id
+			 WHERE t.id=$1 AND f.business_id=$2 AND t.is_deleted=false`,
+			req.TableID, businessID).Scan(&exists); err != nil {
+			return c.Status(403).JSON(fiber.Map{"error": "Stol topilmadi yoki boshqa kafega tegishli"})
+		}
+	}
+
 	var orderID string
 	err = tx.QueryRow(ctx,
 		`INSERT INTO orders (business_id, table_id, source, status, created_by_user_id)
@@ -522,11 +536,20 @@ func (h *OrderHandler) PayOrder(c *fiber.Ctx) error {
 	}
 	defer tx.Rollback(ctx)
 
+	// FOR UPDATE — bir vaqtda ikkita to'lov so'rovi kelsa (ikki marta bosish,
+	// tarmoq qayta urinishi), ikkinchisi birinchisi commit/rollback bo'lguncha
+	// shu qatorni kutadi, so'ng holatni qayta o'qib "paid" ekanini ko'radi va
+	// pastdagi status tekshiruvida rad etiladi — ikki marta to'lov yozilmaydi.
 	var finalAmount float64
+	var status string
 	if err := tx.QueryRow(ctx,
-		`SELECT final_amount FROM orders WHERE id=$1 AND business_id=$2`, orderID, businessID,
-	).Scan(&finalAmount); err != nil {
+		`SELECT final_amount, status FROM orders WHERE id=$1 AND business_id=$2 FOR UPDATE`,
+		orderID, businessID,
+	).Scan(&finalAmount, &status); err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "Buyurtma topilmadi"})
+	}
+	if status != "new" && status != "activated" {
+		return c.Status(400).JSON(fiber.Map{"error": "Bu buyurtma to'lov uchun mos holatda emas"})
 	}
 	if paymentTotal < finalAmount {
 		return c.Status(400).JSON(fiber.Map{"error": "To'lov summasi buyurtma summasidan kam"})
@@ -553,11 +576,12 @@ func (h *OrderHandler) PayOrder(c *fiber.Ctx) error {
 
 	var tableID *string
 	err = tx.QueryRow(ctx,
-		`UPDATE orders SET status='paid', paid_at=now() WHERE id=$1 AND business_id=$2 RETURNING table_id`,
+		`UPDATE orders SET status='paid', paid_at=now()
+		 WHERE id=$1 AND business_id=$2 AND status IN ('new','activated') RETURNING table_id`,
 		orderID, businessID,
 	).Scan(&tableID)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		return c.Status(400).JSON(fiber.Map{"error": "Bu buyurtma to'lov uchun mos holatda emas"})
 	}
 
 	if tableID != nil {
@@ -607,12 +631,22 @@ func (h *OrderHandler) CancelOrder(c *fiber.Ctx) error {
 	}
 	defer tx.Rollback(ctx)
 
-	cmd, err := tx.Exec(ctx, `UPDATE orders SET status='cancelled' WHERE id=$1 AND business_id=$2`, orderID, businessID)
+	// Faqat hali to'lanmagan buyurtma shu yo'l bilan bekor qilinadi. To'langan
+	// buyurtmani bekor qilish pulni hisobotdan "yashirish" imkonini berardi
+	// (mijozdan naqd olib, keyin buyurtmani bekor qilib, kassa hisobotini
+	// tozalash). To'langan buyurtmani qaytarish uchun reports_edit.go dagi
+	// RevertOrder ishlatiladi — u staff.manage vakolati talab qiladi va
+	// to'lov yozuvlarini ham to'g'ri o'chiradi/jurnal qiladi.
+	cmd, err := tx.Exec(ctx,
+		`UPDATE orders SET status='cancelled' WHERE id=$1 AND business_id=$2 AND status IN ('new','activated')`,
+		orderID, businessID)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 	if cmd.RowsAffected() == 0 {
-		return c.Status(404).JSON(fiber.Map{"error": "Buyurtma topilmadi"})
+		return c.Status(400).JSON(fiber.Map{
+			"error": "Bu buyurtmani bekor qilib bo'lmaydi (topilmadi yoki allaqachon to'langan/bekor qilingan)",
+		})
 	}
 	_, err = tx.Exec(ctx,
 		`INSERT INTO order_cancellations (order_id, reason, cancelled_by) VALUES ($1,$2,$3)`,
@@ -663,6 +697,14 @@ func (h *OrderHandler) ApplyDiscount(c *fiber.Ctx) error {
 
 	ctx := context.Background()
 
+	// Faqat hali to'lanmagan buyurtmaga chegirma qo'llanadi — xuddi
+	// findEditableOrder (qarang: AddItem/UpdateOrderItem) qanday tekshirsa
+	// shunday. To'langan buyurtmaga "chegirma" qo'yish orqali final_amount'ni
+	// pastga tushirish, pul allaqachon olingandan keyin hisobotni buzardi.
+	if err := findEditableOrder(ctx, h.DB, orderID, businessID); err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "Buyurtma topilmadi"})
+	}
+
 	var totalAmount float64
 	if err := h.DB.QueryRow(ctx,
 		`SELECT total_amount FROM orders WHERE id=$1 AND business_id=$2`, orderID, businessID,
@@ -674,7 +716,8 @@ func (h *OrderHandler) ApplyDiscount(c *fiber.Ctx) error {
 	}
 
 	_, err := h.DB.Exec(ctx,
-		`UPDATE orders SET discount_amount=$1, discount_reason=$2, final_amount = total_amount - $1 WHERE id=$3 AND business_id=$4`,
+		`UPDATE orders SET discount_amount=$1, discount_reason=$2, final_amount = total_amount - $1
+		 WHERE id=$3 AND business_id=$4 AND status IN ('new','activated')`,
 		body.DiscountAmount, body.Reason, orderID, businessID)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
