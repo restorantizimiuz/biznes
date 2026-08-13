@@ -23,8 +23,15 @@ export const TILE_ATTRIBUTION = '© OpenStreetMap';
 
 export const MAX_ZOOM = 19;
 
-/** Nuqta belgilanmaganda xarita ochiladigan joy — Toshkent markazi. */
-export const DEFAULT_CENTER: [number, number] = [41.2995, 69.2401];
+/**
+ * Nuqta belgilanmaganda xarita ochiladigan joy — Xazorasp tumani markazi
+ * (Xorazm viloyati). Bu faqat xaritaning boshlang'ich ko'rinishi: mijoz
+ * xaritani surib (yoki "Mening joylashuvim" orqali) o'z nuqtasini
+ * belgilamaguncha, bu koordinata hech qayerga (formaga, so'rovga) yozilmaydi
+ * — MapPicker uni faqat boshlang'ich `center` sifatida ishlatadi, `onChange`
+ * esa faqat haqiqiy foydalanuvchi harakatida (moveend) chaqiriladi.
+ */
+export const DEFAULT_CENTER: [number, number] = [41.3167, 61.0667];
 export const DEFAULT_ZOOM = 13;
 
 /** Mijoz joylashuvi aniqlangandan keyingi yaqinlashtirish darajasi. */

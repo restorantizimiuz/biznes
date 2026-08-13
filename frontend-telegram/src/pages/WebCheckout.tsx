@@ -105,7 +105,7 @@ export default function WebCheckout({
         setLocating(false);
         setShowMap(true);
         setError(
-          "Joylashuvni aniqlab bo'lmadi. Xaritadan qo'lda belgilang yoki manzilni yozing.",
+          "Joylashuvingizni avtomatik aniqlab bo'lmadi. Xarita orqali manzilingizni belgilang.",
         );
       },
       { enableHighAccuracy: true, timeout: 10000 },
@@ -235,7 +235,7 @@ export default function WebCheckout({
                       disabled={locating}
                       className="flex-1 rounded-full bg-[var(--color-accent)] px-3 py-2.5 text-[13px] font-semibold text-[var(--color-accent-text)] disabled:opacity-60"
                     >
-                      {locating ? 'Aniqlanmoqda...' : '📍 Mening joylashuvim'}
+                      {locating ? 'Joylashuv aniqlanmoqda...' : '📍 Mening joylashuvim'}
                     </button>
                     <button
                       onClick={() => setShowMap((v) => !v)}
