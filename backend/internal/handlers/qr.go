@@ -175,6 +175,12 @@ func (h *QRHandler) GetMenuByBusinessCode(c *fiber.Ctx) error {
 		"business_id":   businessID,
 		"business_name": businessName,
 		"categories":    result,
+		// Uydan buyurtma sahifasi shu bayroqlarga qarab "Yetkazib berish"/
+		// "Olib ketish" tugmalarini ko'rsatadi yoki yashiradi.
+		"order_types": fiber.Map{
+			"delivery": middleware.FeatureEnabled(ctx, h.DB, businessID, middleware.FeatureDelivery),
+			"pickup":   middleware.FeatureEnabled(ctx, h.DB, businessID, middleware.FeaturePickup),
+		},
 	})
 }
 

@@ -32,6 +32,8 @@ var platformFeatureKeys = []string{
 	middleware.FeatureTelegramBot,
 	middleware.FeatureReceiptPrint,
 	middleware.FeatureReportExport,
+	middleware.FeatureDelivery,
+	middleware.FeaturePickup,
 }
 
 // ---------------------------------------------------------------------------

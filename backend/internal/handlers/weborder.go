@@ -123,6 +123,16 @@ func (h *WebOrderHandler) CreateWebOrder(c *fiber.Ctx) error {
 	if !middleware.FeatureEnabled(ctx, h.DB, businessID, middleware.FeatureOnlineOrder) {
 		return c.Status(403).JSON(fiber.Map{"error": middleware.ErrFeatureDisabled.Error()})
 	}
+	// Yetkazib berish/olib ketish alohida yoqiladi/o'chiriladi. Frontend
+	// mos tugmani allaqachon yashiradi, lekin haqiqiy tekshiruv shu yerda —
+	// so'rovni qo'lda o'zgartirib o'chirilgan turdan foydalanib bo'lmasin.
+	orderTypeFeature := middleware.FeatureDelivery
+	if req.OrderType == "pickup" {
+		orderTypeFeature = middleware.FeaturePickup
+	}
+	if !middleware.FeatureEnabled(ctx, h.DB, businessID, orderTypeFeature) {
+		return c.Status(403).JSON(fiber.Map{"error": middleware.ErrFeatureDisabled.Error()})
+	}
 
 	var openCount int
 	if err := h.DB.QueryRow(ctx,

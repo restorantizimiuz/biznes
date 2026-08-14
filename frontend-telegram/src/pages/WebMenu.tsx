@@ -104,6 +104,7 @@ export default function WebMenu() {
       <WebCheckout
         businessCode={businessCode}
         businessName={menu?.business_name ?? ''}
+        orderTypes={menu?.order_types}
         lines={cart.lines}
         total={cart.total}
         onBack={() => setView(openCategoryId ? 'products' : 'categories')}

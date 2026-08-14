@@ -31,6 +31,7 @@ const PAYMENT_METHODS: { id: PaymentMethod; emoji: string; label: string }[] = [
 export default function WebCheckout({
   businessCode,
   businessName,
+  orderTypes,
   lines,
   total,
   onBack,
@@ -40,6 +41,10 @@ export default function WebCheckout({
 }: {
   businessCode: string;
   businessName: string;
+  // Superadmin har bir turni alohida yoqadi/o'chiradi (backend: order_types).
+  // Kelmasa (masalan eski keshdagi javob) ikkalasi ham ochiq deb hisoblanadi —
+  // FeatureEnabled'dagi "yozuv yo'q = yoqilgan" qoidasi bilan bir xil.
+  orderTypes?: { delivery: boolean; pickup: boolean };
   lines: CartLine[];
   total: number;
   onBack: () => void;
@@ -47,7 +52,10 @@ export default function WebCheckout({
   onDecrement: (id: string) => void;
   onOrdered: (publicToken: string) => void;
 }) {
-  const [orderType, setOrderType] = useState<OnlineType>('delivery');
+  const availableOrderTypes = ORDER_TYPES.filter((t) => orderTypes?.[t.id] ?? true);
+  const [orderType, setOrderType] = useState<OnlineType>(
+    () => availableOrderTypes[0]?.id ?? 'delivery',
+  );
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
@@ -176,6 +184,12 @@ export default function WebCheckout({
       <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
         {lines.length === 0 ? (
           <EmptyState emoji="🛒" title="Savat bo'sh" subtitle="Menyudan mahsulot tanlang" />
+        ) : availableOrderTypes.length === 0 ? (
+          <EmptyState
+            emoji="🚫"
+            title="Uydan buyurtma vaqtincha to'xtatilgan"
+            subtitle="Iltimos, restoranga bog'laning yoki keyinroq qayta urinib ko'ring"
+          />
         ) : (
           <>
             <section className="divide-y divide-[var(--color-border)] rounded-[var(--radius-md)] bg-[var(--color-surface)] px-3">
@@ -191,7 +205,7 @@ export default function WebCheckout({
 
             <Section title="Buyurtma turi">
               <div className="space-y-2">
-                {ORDER_TYPES.map((type) => (
+                {availableOrderTypes.map((type) => (
                   <button
                     key={type.id}
                     onClick={() => setOrderType(type.id)}

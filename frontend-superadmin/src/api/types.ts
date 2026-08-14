@@ -54,6 +54,8 @@ export interface CreateBusinessBody {
 export const FEATURE_KEYS = [
   'qr_menu',
   'online_order',
+  'delivery_order',
+  'pickup_order',
   'telegram_bot',
   'receipt_print',
   'reports_export',
@@ -62,6 +64,8 @@ export const FEATURE_KEYS = [
 export const FEATURE_LABELS: Record<string, string> = {
   qr_menu: 'QR menyu',
   online_order: 'Online buyurtma',
+  delivery_order: 'Yetkazib berish',
+  pickup_order: 'Olib ketish',
   telegram_bot: 'Telegram bot',
   receipt_print: 'Chek chiqarish',
   reports_export: 'Excel eksport',

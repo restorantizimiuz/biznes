@@ -17,6 +17,11 @@ const (
 	FeatureTelegramBot  = "telegram_bot"
 	FeatureReceiptPrint = "receipt_print"
 	FeatureReportExport = "reports_export"
+	// FeatureDelivery/FeaturePickup - online_order ichidagi ikkita buyurtma
+	// turi alohida yoqiladi/o'chiriladi (masalan kafe hozircha faqat
+	// yetkazib berishni qabul qilsa, olib ketishni o'chirib qo'yadi).
+	FeatureDelivery = "delivery_order"
+	FeaturePickup   = "pickup_order"
 )
 
 // ErrFeatureDisabled - funksiya o'chirilganda qaytariladi.

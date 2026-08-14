@@ -70,6 +70,9 @@ export interface MenuResponse {
   business_name: string;
   categories: MenuCategory[];
   active_order?: ActiveOrder | null;
+  // Faqat getMenuByBusinessCode javobida keladi — uydan buyurtma sahifasi
+  // qaysi turlar (yetkazib berish/olib ketish) ochiqligini shundan biladi.
+  order_types?: { delivery: boolean; pickup: boolean };
 }
 
 export interface CartLine {
