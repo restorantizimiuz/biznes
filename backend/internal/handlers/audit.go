@@ -22,6 +22,10 @@ const (
 	AuditKitchenStatusChanged = "kitchen_status_changed"
 	AuditEditedAfterClose     = "order_edited_after_close"
 	AuditReceiptPrinted       = "receipt_printed"
+	// Super-admin kafe xodimining login/parolini o'zgartirganda yoziladi.
+	// OrderID bo'sh qoladi — bu buyurtmaga emas, hisobga tegishli amal.
+	AuditStaffLoginChanged    = "staff_login_changed"
+	AuditStaffPasswordChanged = "staff_password_changed"
 )
 
 // auditEntry - bitta jurnal yozuvi.

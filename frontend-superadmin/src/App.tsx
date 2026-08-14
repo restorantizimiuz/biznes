@@ -10,7 +10,7 @@ import SubscriptionsPage from './pages/SubscriptionsPage';
 import FeatureFlagsPage from './pages/FeatureFlagsPage';
 import UsersPage from './pages/UsersPage';
 import AuditLogPage from './pages/AuditLogPage';
-import ComingSoonPage from './pages/ComingSoonPage';
+import SecurityPage from './pages/SecurityPage';
 
 const queryClient = new QueryClient();
 
@@ -30,13 +30,7 @@ function App() {
                 <Route path="/foydalanuvchilar" element={<UsersPage mode="all" />} />
                 <Route path="/xodimlar" element={<UsersPage mode="staff" />} />
                 <Route path="/audit" element={<AuditLogPage />} />
-                {/* Platform sozlamalari uchun DB'da hech qanday storage (jadval/model)
-                    mavjud emas — audit shu tarzda topildi, yangi migratsiya
-                    yaratilmadi (tasdiqlanmagunicha). */}
-                <Route
-                  path="/sozlamalar"
-                  element={<ComingSoonPage icon="⚙️" title="Platforma sozlamalari" />}
-                />
+                <Route path="/sozlamalar" element={<SecurityPage />} />
               </Route>
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />

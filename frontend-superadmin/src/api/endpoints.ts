@@ -63,6 +63,31 @@ export const listPlatformStaff = (params: PlatformListParams = {}) =>
     .get<PlatformUsersResponse>('/platform/staff', { params })
     .then((r) => r.data);
 
+export interface CredentialUpdateBody {
+  new_login?: string;
+  new_password?: string;
+  new_password_confirm?: string;
+}
+
+// Super-admin o'zining login/parolini o'zgartiradi — joriy parol talab qilinadi.
+export const updateMe = (body: CredentialUpdateBody & { current_password: string }) =>
+  apiClient.patch<{ message: string; login: string }>('/platform/me', body).then((r) => r.data);
+
+// Super-admin tanlangan kafening bitta xodimi/egasi uchun login/parolni
+// almashtiradi — joriy parol shart emas (superadmin xodimning parolini
+// bilmaydi, faqat reset qiladi).
+export const updateStaffCredentials = (
+  businessId: string,
+  userId: string,
+  body: CredentialUpdateBody,
+) =>
+  apiClient
+    .patch<{ message: string; login: string }>(
+      `/platform/businesses/${businessId}/staff/${userId}`,
+      body,
+    )
+    .then((r) => r.data);
+
 export const listPlatformAuditLogs = (
   params: { business_id?: string; action?: string; limit?: number; offset?: number } = {},
 ) =>

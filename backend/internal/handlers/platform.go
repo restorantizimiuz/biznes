@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -13,6 +14,15 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
+)
+
+// Login/parol validatsiyasi uchun chegaralar.
+// maxPasswordLength — bcrypt 72 baytdan uzun parolni jimgina kesib
+// tashlaydi, shuning uchun undan oldin aniq xato qaytariladi.
+const (
+	minCredentialPasswordLength = 6
+	maxCredentialPasswordLength = 72
+	maxCredentialLoginLength    = 100
 )
 
 // PlatformHandler - super-admin (platforma egalari) uchun API.
@@ -645,4 +655,197 @@ func (h *PlatformHandler) ListAuditLogs(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"entries": entries, "limit": limit, "offset": offset})
+}
+
+// ---------------------------------------------------------------------------
+// Login/parolni almashtirish
+// ---------------------------------------------------------------------------
+
+// parseCredentialUpdate - login/parol o'zgartirish so'rovlaridagi umumiy
+// tekshiruv: bo'sh/juda uzun login, parol uzunligi, tasdiqlash mosligi.
+// Maydon so'rovda umuman kelmasa (nil) — "o'zgartirilmaydi" deb hisoblanadi,
+// bcrypt hash esa faqat parol haqiqatan berilganda hisoblanadi.
+func parseCredentialUpdate(newLogin, newPassword, newPasswordConfirm *string) (login *string, hash *string, apiErr error) {
+	if newLogin != nil {
+		trimmed := strings.TrimSpace(*newLogin)
+		if trimmed == "" {
+			return nil, nil, fiber.NewError(400, "Login bo'sh bo'lishi mumkin emas")
+		}
+		if len(trimmed) > maxCredentialLoginLength {
+			return nil, nil, fiber.NewError(400, "Login juda uzun")
+		}
+		login = &trimmed
+	}
+
+	if newPassword != nil {
+		pw := *newPassword
+		if pw == "" {
+			return nil, nil, fiber.NewError(400, "Yangi parolni kiriting")
+		}
+		if len(pw) < minCredentialPasswordLength {
+			return nil, nil, fiber.NewError(400,
+				fmt.Sprintf("Parol kamida %d belgidan iborat bo'lishi kerak", minCredentialPasswordLength))
+		}
+		if len(pw) > maxCredentialPasswordLength {
+			return nil, nil, fiber.NewError(400, "Parol juda uzun")
+		}
+		if newPasswordConfirm == nil || pw != *newPasswordConfirm {
+			return nil, nil, fiber.NewError(400, "Yangi parol va tasdiqlash mos emas")
+		}
+		generated, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
+		if err != nil {
+			return nil, nil, fiber.NewError(500, "Parolni shifrlashda xatolik")
+		}
+		hashStr := string(generated)
+		hash = &hashStr
+	}
+
+	if login == nil && hash == nil {
+		return nil, nil, fiber.NewError(400, "O'zgartiriladigan maydon kiritilmadi")
+	}
+	return login, hash, nil
+}
+
+type updateMeRequest struct {
+	CurrentPassword    string  `json:"current_password"`
+	NewLogin           *string `json:"new_login"`
+	NewPassword        *string `json:"new_password"`
+	NewPasswordConfirm *string `json:"new_password_confirm"`
+}
+
+// UpdateMe - super-admin o'zining login/parolini o'zgartiradi.
+//
+// JWT_SECRET va PLATFORM_JWT_SECRET bu yerda hech qachon o'zgarmaydi — faqat
+// platform_admins jadvalidagi ikkita ustun yangilanadi. Tizimda token bekor
+// qilish (revocation) mexanizmi umuman yo'q (kafe xodimi parolini
+// o'zgartirganda ham eski JWT tabiiy muddati tugaguncha ishlayveradi, qarang:
+// middleware/permission.go dagi kesh — u ham faqat vakolatlarga tegishli),
+// shuning uchun bu yerda ham yangi mexanizm qo'shilmadi: hozirgi token
+// (shu so'rovda ishlatilgani ham) 12 soatlik muddati tugaguncha amal qiladi.
+func (h *PlatformHandler) UpdateMe(c *fiber.Ctx) error {
+	adminID, _ := c.Locals("platform_admin_id").(string)
+
+	var req updateMeRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "Noto'g'ri so'rov"})
+	}
+	if req.CurrentPassword == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "Joriy parolni kiriting"})
+	}
+
+	newLogin, newHash, err := parseCredentialUpdate(req.NewLogin, req.NewPassword, req.NewPasswordConfirm)
+	if err != nil {
+		fe := err.(*fiber.Error)
+		return c.Status(fe.Code).JSON(fiber.Map{"error": fe.Message})
+	}
+
+	ctx := context.Background()
+	var currentHash string
+	if err := h.DB.QueryRow(ctx,
+		`SELECT password_hash FROM platform_admins WHERE id=$1`, adminID,
+	).Scan(&currentHash); err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "Hisob topilmadi"})
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(req.CurrentPassword)); err != nil {
+		return c.Status(401).JSON(fiber.Map{"error": "Joriy parol noto'g'ri"})
+	}
+
+	var resultLogin string
+	if err := h.DB.QueryRow(ctx,
+		`UPDATE platform_admins SET login=COALESCE($1,login), password_hash=COALESCE($2,password_hash)
+		 WHERE id=$3 RETURNING login`,
+		newLogin, newHash, adminID,
+	).Scan(&resultLogin); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "Bu login band bo'lishi mumkin"})
+	}
+
+	// Platforma darajasidagi amal — audit_log jadvali business_id talab
+	// qiladi (u yerga tegishli emas), shuning uchun server jurnaliga yoziladi.
+	// Parol/hash hech qachon bu yerga ham chiqarilmaydi.
+	changed := []string{}
+	if newLogin != nil {
+		changed = append(changed, "login")
+	}
+	if newHash != nil {
+		changed = append(changed, "password")
+	}
+	log.Printf("platform_admin %s o'z hisobini yangiladi: %s", adminID, strings.Join(changed, ", "))
+
+	return c.JSON(fiber.Map{
+		"message": "Login va parol muvaffaqiyatli yangilandi",
+		"login":   resultLogin,
+	})
+}
+
+type updateStaffCredentialsRequest struct {
+	NewLogin           *string `json:"new_login"`
+	NewPassword        *string `json:"new_password"`
+	NewPasswordConfirm *string `json:"new_password_confirm"`
+}
+
+// UpdateStaffCredentials - super-admin tanlangan kafening bitta xodimi
+// (yoki egasi) uchun login/parolni almashtiradi — masalan xodim parolini
+// unutib, hisobiga kira olmay qolganda.
+//
+// MUHIM: business_id + user_id kombinatsiyasi HAR DOIM shu yerda, serverda
+// tekshiriladi (`WHERE id=$1 AND business_id=$2`) — mijoz yuborgan
+// birlashmaga ko'r-ko'rona ishonilmaydi, aks holda superadmin xato/qasddan
+// boshqa kafening xodimini o'zgartirib qo'yishi mumkin bo'lardi. Kafe
+// egasining parolini superadmin bemalol o'zgartira oladi (staff.go dagi
+// "owner himoyasi" faqat oddiy xodimlarga nisbatan, superadmin allaqachon
+// undan yuqori vakolatga ega).
+func (h *PlatformHandler) UpdateStaffCredentials(c *fiber.Ctx) error {
+	businessID := c.Params("id")
+	userID := c.Params("userId")
+
+	var req updateStaffCredentialsRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "Noto'g'ri so'rov"})
+	}
+
+	newLogin, newHash, err := parseCredentialUpdate(req.NewLogin, req.NewPassword, req.NewPasswordConfirm)
+	if err != nil {
+		fe := err.(*fiber.Error)
+		return c.Status(fe.Code).JSON(fiber.Map{"error": fe.Message})
+	}
+
+	ctx := context.Background()
+	var oldLogin string
+	if err := h.DB.QueryRow(ctx,
+		`SELECT login FROM users WHERE id=$1 AND business_id=$2`, userID, businessID,
+	).Scan(&oldLogin); err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "Xodim topilmadi"})
+	}
+
+	var resultLogin string
+	if err := h.DB.QueryRow(ctx,
+		`UPDATE users SET login=COALESCE($1,login), password_hash=COALESCE($2,password_hash)
+		 WHERE id=$3 AND business_id=$4 RETURNING login`,
+		newLogin, newHash, userID, businessID,
+	).Scan(&resultLogin); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "Bu login band bo'lishi mumkin"})
+	}
+
+	actorLogin, _ := c.Locals("platform_admin_login").(string)
+	if newLogin != nil {
+		writeAudit(ctx, h.DB, auditEntry{
+			BusinessID: businessID,
+			ActorLabel: "Super-admin (" + actorLogin + ")",
+			Action:     AuditStaffLoginChanged,
+			Details:    map[string]any{"from": oldLogin, "to": resultLogin},
+		})
+	}
+	if newHash != nil {
+		writeAudit(ctx, h.DB, auditEntry{
+			BusinessID: businessID,
+			ActorLabel: "Super-admin (" + actorLogin + ")",
+			Action:     AuditStaffPasswordChanged,
+			Details:    map[string]any{"login": resultLogin},
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Login va parol muvaffaqiyatli yangilandi",
+		"login":   resultLogin,
+	})
 }

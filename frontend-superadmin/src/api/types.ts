@@ -134,4 +134,6 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   kitchen_status_changed: "Oshxona holati o'zgardi",
   order_edited_after_close: 'Yopilgandan keyin tahrirlandi',
   receipt_printed: 'Chek chiqarildi',
+  staff_login_changed: 'Login super-admin tomonidan o‘zgartirildi',
+  staff_password_changed: 'Parol super-admin tomonidan o‘zgartirildi',
 };

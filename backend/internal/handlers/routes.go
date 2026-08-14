@@ -113,6 +113,8 @@ func RegisterRoutes(app *fiber.App, db *pgxpool.Pool, rdb *redis.Client, hub *no
 	api.Post("/platform/login", platform.Login)
 
 	platformGroup := api.Group("/platform", middleware.PlatformAuthRequired(cfg.PlatformJWTSecret))
+	platformGroup.Patch("/me", platform.UpdateMe)
+	platformGroup.Patch("/businesses/:id/staff/:userId", platform.UpdateStaffCredentials)
 	platformGroup.Get("/stats", platform.Stats)
 	platformGroup.Get("/businesses", platform.ListBusinesses)
 	platformGroup.Post("/businesses", platform.CreateBusiness)
