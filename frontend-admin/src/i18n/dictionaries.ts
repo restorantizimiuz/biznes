@@ -347,8 +347,6 @@ const uz = {
   'settings.onlineOrderHint':
     "Shu havolani Instagram profilingizga qo'ying — mijozlar uyda o'tirib menyuni ko'radi va buyurtma beradi. QR kodni varaqa yoki stikerga chiqarsangiz ham bo'ladi.",
   'settings.onlineOrderLink': 'Menyu havolasi',
-  'settings.onlineOrderNotConfigured':
-    "Havola hali sozlanmagan — quyidagi manzil vaqtinchalik va faqat shu kompyuterda ochiladi. Uni mijozlarga tarqatmang. Serverda WEB_MENU_BASE_URL o'zgaruvchisiga menyu sayti domenini yozish kerak, shundan keyin bu yerda haqiqiy havola chiqadi.",
   'settings.copyLink': 'Havolani nusxalash',
   'settings.copied': 'Nusxalandi ✓',
   'settings.openLink': 'Ochib ko‘rish',
@@ -699,8 +697,6 @@ const ru: Dictionary = {
   'settings.onlineOrderHint':
     'Разместите эту ссылку в профиле Instagram — гости смогут посмотреть меню и сделать заказ из дома. QR-код можно распечатать на листовке или наклейке.',
   'settings.onlineOrderLink': 'Ссылка на меню',
-  'settings.onlineOrderNotConfigured':
-    'Ссылка ещё не настроена — адрес ниже временный и открывается только на этом компьютере. Не давайте его гостям. На сервере нужно указать переменную WEB_MENU_BASE_URL с доменом сайта меню, после этого здесь появится рабочая ссылка.',
   'settings.copyLink': 'Скопировать ссылку',
   'settings.copied': 'Скопировано ✓',
   'settings.openLink': 'Открыть',
@@ -1046,8 +1042,6 @@ const en: Dictionary = {
   'settings.onlineOrderHint':
     'Put this link in your Instagram profile — guests can browse the menu and order from home. You can also print the QR code on a flyer or sticker.',
   'settings.onlineOrderLink': 'Menu link',
-  'settings.onlineOrderNotConfigured':
-    'This link is not configured yet — the address below is temporary and only opens on this computer. Do not share it with guests. Set the WEB_MENU_BASE_URL variable on the server to the menu site domain, and the real link will appear here.',
   'settings.copyLink': 'Copy link',
   'settings.copied': 'Copied ✓',
   'settings.openLink': 'Open',

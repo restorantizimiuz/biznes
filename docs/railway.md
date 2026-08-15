@@ -68,30 +68,10 @@ Yangi xizmat, **Root Directory = `backend`**. O'zgaruvchilar:
 | `UPLOAD_DIR` | `/data/uploads` |
 | `TELEGRAM_BOT_TOKEN` | BotFather bergan token |
 | `TELEGRAM_BOT_USERNAME` | bot username'i (`@`siz) |
-| `WEB_MENU_BASE_URL` | `frontend-telegram` xizmatining ochiq domeni, `https://` bilan |
 
 > `JWT_SECRET` va `PLATFORM_JWT_SECRET` **bir xil bo'lsa server ishga
 > tushmaydi** — bu ataylab qilingan tekshiruv: aks holda kafe xodimining
 > tokeni super-admin API'sida ham ishlab ketardi.
-
-#### `WEB_MENU_BASE_URL` nima uchun kerak
-
-Kassa panelidagi **Sozlamalar → Online buyurtma havolasi** shu manzil
-asosida yig'iladi: `<baza>/menyu/<kafe-kodi>`. Kafe aynan shu havolani
-Instagram profiliga qo'yadi.
-
-O'zgaruvchi ko'rsatilmasa havola `http://localhost:5174/menyu/<kod>` bo'lib
-qoladi — mijoz uni ocha olmaydi. Bu bir marta sodir bo'lgan: jadvalda
-o'zgaruvchi yo'q edi, shuning uchun deploy paytida o'tkazib yuborilgan.
-Endi bunday holatda server logida ogohlantirish chiqadi va Sozlamalar
-sahifasi havolani sariq ogohlantirish bilan ko'rsatadi.
-
-Qiymat `frontend-telegram` domeni bo'lishi kerak — kassa (`frontend-admin`)
-yoki backend domeni **emas**. Oxirida `/` shart emas.
-
-> Havola backenddan har so'rovda qayta olinadi, shuning uchun bu
-> o'zgaruvchini o'zgartirganda **frontendlarni qayta build qilish shart
-> emas** — backend qayta ishga tushishi kifoya.
 
 **Volume qo'shish shart:** mount path `/data`. Usiz menyu rasmlari har
 deploydan keyin yo'qoladi (konteyner diski vaqtinchalik).
@@ -112,11 +92,6 @@ oldin kiritilishi kerak:
 
 > Backend domenini keyin o'zgartirsangiz, frontendlarni **qayta build
 > qilish** kerak — eski manzil JS ichida qotib qolgan bo'ladi.
-
-> `frontend-telegram` domenini o'zgartirsangiz (yoki unga o'z domeningizni
-> ulasangiz), backenddagi `WEB_MENU_BASE_URL` ni ham yangilang — aks holda
-> Sozlamalardagi online buyurtma havolasi eski manzilga ishora qilib
-> qoladi.
 
 ### 3.4. Telegram bot
 
@@ -169,6 +144,4 @@ buyurtma → to'lov → hisobot.
 - [ ] `SEED_DEMO` yoqilmagan (demo hisob paroli hammaga ma'lum)
 - [ ] `superadmin` paroli o'zgartirilgan
 - [ ] `UPLOAD_DIR` volume'ga ko'rsatilgan
-- [ ] `WEB_MENU_BASE_URL` — `frontend-telegram` domeni (localhost emas);
-      Sozlamalarda sariq ogohlantirish ko'rinmasligi kerak
 - [ ] `.env` fayllar repoga tushmagan (`.gitignore` da)

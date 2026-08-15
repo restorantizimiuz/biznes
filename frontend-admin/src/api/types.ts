@@ -204,12 +204,6 @@ export interface Settings {
    * Backendda yig'iladi (WEB_MENU_BASE_URL) — frontend deploy domenini bilmaydi.
    */
   web_menu_url: string;
-  /**
-   * Serverda WEB_MENU_BASE_URL ko'rsatilganmi. false bo'lsa `web_menu_url`
-   * localhost'ga ishora qiladi — Sozlamalar buni ogohlantirish bilan
-   * ko'rsatadi, aks holda kafe ochilmaydigan havolani ulashib yuboradi.
-   */
-  web_menu_url_configured: boolean;
 }
 
 export type SubscriptionPlan = 'basic' | 'qr' | 'full';
