@@ -101,7 +101,11 @@ export default function WebMenu() {
     );
   }, [normalizedQuery, productsById]);
 
-  const openCategory = menu?.categories.find((c) => c.id === openCategoryId) ?? null;
+  // `menu.categories` backendda hech qanday mahsulot topilmasa (masalan
+  // barcha taomlar "tugadi" deb belgilangan) Go'ning bo'sh slice → JSON
+  // `null` xatti-harakati sabab `null` bo'lib kelishi mumkin — shuning
+  // uchun optional chaining ikkinchi marta ham qo'llanadi.
+  const openCategory = menu?.categories?.find((c) => c.id === openCategoryId) ?? null;
 
   if (stage === 'loading') {
     return (
@@ -221,7 +225,7 @@ export default function WebMenu() {
                 />
               ))}
             </div>
-          ) : menu && menu.categories.length > 0 ? (
+          ) : menu?.categories && menu.categories.length > 0 ? (
             <CategoryList
               categories={menu.categories}
               onSelect={(id) => {
