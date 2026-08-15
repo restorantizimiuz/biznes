@@ -55,20 +55,9 @@ export default function App() {
   const [tableName, setTableName] = useState('');
   const [activeOrder, setActiveOrder] = useState<ActiveOrder | null>(null);
 
-  // Telegram WebApp'ni ishga tushirish + mavzu (light/dark) o'zgarishini kuzatish.
-  useEffect(() => {
-    if (!tg) return;
-    tg.ready();
-    tg.expand();
-    const applyScheme = () => {
-      document.documentElement.dataset.tgScheme = tg.colorScheme;
-    };
-    applyScheme();
-    tg.setHeaderColor?.('secondary_bg_color');
-    tg.setBackgroundColor?.('bg_color');
-    tg.onEvent('themeChanged', applyScheme);
-    return () => tg.offEvent('themeChanged', applyScheme);
-  }, []);
+  // Telegram WebApp'ni ishga tushirish (ready/expand/mavzu) endi router
+  // darajasida — hooks/useTelegramChrome.ts. U shu yerda turganda ochiq veb
+  // sahifalarga tegmasdi va ular Telegram ichida bo'sh ko'rinardi.
 
   // Menyuni yuklash. Stol endpointi menyu bilan birga stol nomini va joriy
   // hisobni ham qaytaradi.

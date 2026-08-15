@@ -996,3 +996,56 @@ build qilish shart emas — backend restart kifoya.
 bo'lib chiqadi: domen namunaviy, ustiga `/t/<token>` yo'li
 `frontend-telegram` routerida umuman yo'q (faqat `/`, `/menyu/:kod`,
 `/buyurtma/:token`). Alohida topshiriq sifatida qoldirildi.
+
+---
+
+## 2026-08-15 — Telegram ichida menyu sahifasi bo'sh chiqishi tuzatildi
+
+### Belgisi
+
+Mijoz Telegram'da Mini App'ni ochganda oyna butunlay bo'sh — faqat
+Telegram'ning qorong'i foni. Xato xabari ham, "menyu bo'sh" yozuvi ham yo'q.
+
+### Sabab
+
+Telegram `WebApp.ready()` chaqirilmaguncha o'zining yuklanish pardasini
+olib tashlamaydi. Sahifa yuklangan, React chizib bo'lgan bo'lsa ham
+foydalanuvchi bo'sh oyna ko'rib turadi.
+
+`ready()`/`expand()` va `data-tg-scheme` ni qo'yadigan effekt `App.tsx`
+ichida edi. Online buyurtma ochiq veb sahifalarga ajratilganda
+(`/menyu/<kod>`, `/buyurtma/<token>`) ular `routes.tsx` orqali `App`dan
+**tashqarida** chiziladigan bo'ldi — ya'ni bootstrap ularga umuman
+tegmay qoldi.
+
+Ikkinchi oqibat: `data-tg-scheme` qo'yilmagani uchun sahifa Telegram
+mavzusiga emas, qurilma (OS) mavzusiga qarab rang tanlardi.
+
+### Tuzatish
+
+| Fayl | O'zgarish |
+|---|---|
+| `frontend-telegram/src/hooks/useTelegramChrome.ts` | Yangi. `ready`/`expand`/mavzu va `themeChanged` obunasi shu yerga ko'chirildi |
+| `frontend-telegram/src/routes.tsx` | Hook `AppRoutes` da chaqiriladi — barcha marshrutlarni qamrab oladi |
+| `frontend-telegram/src/App.tsx` | Takroriy effekt olib tashlandi |
+
+Hook ataylab router darajasida: yangi sahifa qo'shilganda uni takrorlash
+yodda tutilishi shart emas — xato aynan shundan kelib chiqqan edi.
+
+### Tekshirildi
+
+Playwright bilan Telegram Desktop sharoiti taqlid qilindi (`telegram.org`
+skripti bloklanib, `window.Telegram.WebApp` qorong'i mavzu bilan
+qo'yildi):
+
+- `/menyu/demo-cafe` — `ready` va `expand` chaqirildi, `tgScheme=dark`,
+  fon `#17212b` va matn `#ffffff` (Telegram mavzusi), menyu ko'rindi;
+- `/buyurtma/<token>` va `/` — bir xil natija;
+- tuzatishdan oldin `/menyu/...` da `data-tg-scheme` umuman qo'yilmasdi.
+
+`tsc --noEmit`, `npm run build`, `oxlint` — toza.
+
+> Eslatma: kafening haqiqiy `business_code` i qo'lda bo'lmagani uchun
+> aynan "Mazzi Sushi" sahifasi takrorlanmadi; tekshiruv `demo-cafe` da
+> o'tkazildi. Belgisi mos, sabab aniq — lekin tuzatishdan keyin ham bo'sh
+> chiqsa, havolani brauzerda ochib konsolni ko'rish kerak.
