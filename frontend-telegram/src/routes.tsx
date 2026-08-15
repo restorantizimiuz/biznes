@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import App from './App';
 import WebMenu from './pages/WebMenu';
 import OrderTracking from './pages/OrderTracking';
+import { useTelegramChrome } from './hooks/useTelegramChrome';
 
 /**
  * MIJOZ ILOVASINING IKKI REJIMI
@@ -24,6 +25,10 @@ import OrderTracking from './pages/OrderTracking';
  * mavjud — ularni buzib bo'lmaydi.
  */
 export default function AppRoutes() {
+  // Marshrut darajasida — App.tsx, WebMenu.tsx, OrderTracking.tsx
+  // qaysi biri render bo'lishidan qat'iy nazar bitta marta ishlaydi.
+  useTelegramChrome();
+
   return (
     <BrowserRouter>
       <Routes>
