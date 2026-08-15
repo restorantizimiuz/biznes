@@ -896,3 +896,103 @@ faqat haqiqiy Telegram beradi, bot tokeni esa hozir yo'q.
 
 Sinov ma'lumotlari (soxta buyurtmalar va vaqtinchalik hisoblar) bazadan
 tozalandi.
+
+---
+
+## 2026-08-15 — Online buyurtma havolasi: sozlash o'zgaruvchisi qo'shildi
+
+### Nima tekshirildi
+
+Sozlamalar sahifasidagi **Online buyurtma havolasi** bo'limi so'ralgan edi.
+Tekshiruvda ma'lum bo'ldiki, bo'lim allaqachon mavjud va ishlaydi:
+backend + `frontend-admin` lokal ishga tushirilib, `demo-cafe` hisobi bilan
+`/settings` sahifasi haqiqiy brauzerda ochildi — QR kod, havola matni,
+"Havolani nusxalash" va "Ochib ko'rish" tugmalari joyida, konsolda xato yo'q.
+
+- Frontend: `frontend-admin/src/pages/SettingsPage.tsx` → `OnlineOrderSection`
+- Backend: `backend/internal/handlers/settings.go` → `web_menu_url` maydoni
+
+### Topilgan kamchilik
+
+Havola doim `http://localhost:5174/menyu/<kod>` bo'lib chiqardi. Sababi:
+`WEB_MENU_BASE_URL` `backend/internal/config/config.go` da o'qilsa ham,
+na `backend/.env`, na `backend/.env.example` da umuman eslatilmagan edi —
+shuning uchun har doim localhost zaxira qiymati ishlatilardi. Bunday
+havolani kafe Instagram profiliga qo'ya olmaydi.
+
+Xuddi shu holat `NOMINATIM_URL` da ham bor edi (manzilni koordinatadan
+aniqlash uchun ishlatiladi).
+
+### Asl sabab: hujjatdagi bo'shliq
+
+Chuqurroq qaralganda ma'lum bo'ldiki, muammo Railway'da ham aynan shu —
+`docs/railway.md` §3.2 dagi backend o'zgaruvchilari jadvalida
+`WEB_MENU_BASE_URL` **umuman yo'q** edi. Deploy o'sha jadval bo'yicha
+qilingani uchun o'zgaruvchi hech qachon qo'yilmagan va Railway'dagi kafe
+Sozlamalarda localhost havolasini ko'rib turgan.
+
+Ya'ni bu kod xatosi emas, hujjat xatosi edi — lekin oqibati kafe uchun
+bir xil: online buyurtma umuman ishlamaydi.
+
+### Railway holati (tekshirildi)
+
+| Nima | Natija |
+|---|---|
+| Menyu sayti `https://calm-happiness-production-e2ac.up.railway.app` | 200, `<title>Menyu</title>` — bu `frontend-telegram` |
+| `/menyu/<kod>` yo'li | 200 (SPA fallback `serve -s` orqali) |
+| Backend `https://backend-production-e298.up.railway.app/health` | `{"status":"ok"}` |
+| Menyu sayti bundle'idagi API manzili | `.../api/v1` — havolani yig'adigan backend bilan bir xil |
+| `ALLOWED_ORIGINS` | aniq ro'yxat (`*` emas) — begona `Origin` ga CORS ruxsati berilmadi |
+
+### O'zgartirilgan fayllar
+
+| Fayl | O'zgarish |
+|---|---|
+| `docs/railway.md` | §3.2 jadvaliga `WEB_MENU_BASE_URL` qatori va tushuntirish; §3.3 ga eslatma (menyu domeni o'zgarsa buni ham yangilash); §5 ro'yxatiga tekshiruv bandi |
+| `backend/internal/config/config.go` | `WebMenuBaseURLSet` maydoni (`os.LookupEnv`, bo'sh satr ham "berilmagan"); productionda o'zgaruvchi yo'q bo'lsa log ogohlantirishi |
+| `backend/internal/handlers/settings.go` | Javobga `web_menu_url_configured` qo'shildi |
+| `frontend-admin/src/api/types.ts` | `Settings` ga `web_menu_url_configured: boolean` |
+| `frontend-admin/src/pages/SettingsPage.tsx` | Sozlanmagan bo'lsa bo'lim tepasida sariq ogohlantirish |
+| `frontend-admin/src/i18n/dictionaries.ts` | `settings.onlineOrderNotConfigured` — uz/ru/en |
+| `backend/.env.example` | `WEB_MENU_BASE_URL` va `NOMINATIM_URL` izoh bilan qo'shildi |
+| `backend/.env` | Lokal ish uchun `WEB_MENU_BASE_URL=http://localhost:5174` (repoga kirmaydi) |
+
+`log.Fatal` ataylab ishlatilmadi: havola sozlanmagani butun kassani
+to'xtatib qo'yishga arzimaydi — ogohlantirish yetarli.
+
+### Tekshirildi
+
+Backend `.env`siz ishga tushirilganda:
+
+- production rejimida logda ogohlantirish chiqdi;
+- `/api/v1/settings` → `web_menu_url_configured: false`;
+- brauzerda Sozlamalar sahifasida sariq ogohlantirish ko'rindi.
+
+`WEB_MENU_BASE_URL` haqiqiy Railway domeni bilan berilganda:
+
+- `/api/v1/settings` → `https://calm-happiness-production-e2ac.up.railway.app/menyu/demo-cafe`,
+  `web_menu_url_configured: true`;
+- brauzerda havola va QR kod haqiqiy domenni ko'rsatdi, ogohlantirish
+  yo'qoldi, konsolda xato yo'q.
+
+`go build ./...`, `go vet`, `tsc --noEmit` — toza.
+
+### Qolgan qadam (Railway paneli)
+
+Backend xizmatiga o'zgaruvchi qo'yish kerak — buni kod bilan qilib
+bo'lmaydi:
+
+```
+WEB_MENU_BASE_URL=https://calm-happiness-production-e2ac.up.railway.app
+```
+
+Havola backenddan har so'rovda olinadi, shuning uchun frontendlarni qayta
+build qilish shart emas — backend restart kifoya.
+
+### Aniqlangan, lekin tuzatilmagan
+
+`backend/internal/handlers/tables.go` (~280-288) — stol QR kodi.
+`TELEGRAM_BOT_USERNAME` bo'sh bo'lsa havola `https://menu.example.com/t/<token>`
+bo'lib chiqadi: domen namunaviy, ustiga `/t/<token>` yo'li
+`frontend-telegram` routerida umuman yo'q (faqat `/`, `/menyu/:kod`,
+`/buyurtma/:token`). Alohida topshiriq sifatida qoldirildi.

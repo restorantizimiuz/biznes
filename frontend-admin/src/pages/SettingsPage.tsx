@@ -122,6 +122,7 @@ export default function SettingsPage() {
       {/* --- Online buyurtma havolasi --- */}
       <OnlineOrderSection
         webMenuUrl={settings.web_menu_url}
+        configured={settings.web_menu_url_configured}
         minOrderAmount={minOrderAmount}
         onMinOrderChange={setMinOrderAmount}
       />
@@ -265,13 +266,20 @@ export default function SettingsPage() {
  *
  * QR kod ham chiziladi: kafe uni varaqa, stol ustidagi ko'rgazma yoki
  * eshikdagi stikerga chiqarishi mumkin.
+ *
+ * `configured=false` bo'lsa serverda WEB_MENU_BASE_URL ko'rsatilmagan va
+ * havola localhost'ga ishora qiladi. Bunday havola bir marta productionga
+ * chiqib ketgan, shuning uchun u endi ogohlantirish bilan ko'rsatiladi —
+ * QR va tugmalar joyida qoladi, ular lokal ishlab chiqishda kerak bo'ladi.
  */
 function OnlineOrderSection({
   webMenuUrl,
+  configured,
   minOrderAmount,
   onMinOrderChange,
 }: {
   webMenuUrl: string;
+  configured: boolean;
   minOrderAmount: string;
   onMinOrderChange: (value: string) => void;
 }) {
@@ -306,6 +314,12 @@ function OnlineOrderSection({
         <h2 className="text-sm font-semibold text-slate-800">{t('settings.onlineOrder')}</h2>
         <p className="mt-1 text-xs text-slate-500">{t('settings.onlineOrderHint')}</p>
       </div>
+
+      {!configured && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          ⚠️ {t('settings.onlineOrderNotConfigured')}
+        </p>
+      )}
 
       <div className="flex flex-wrap items-start gap-4">
         {qr && (

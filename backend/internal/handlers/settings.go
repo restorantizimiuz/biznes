@@ -80,6 +80,10 @@ func (h *SettingsHandler) GetSettings(c *fiber.Ctx) error {
 		// backendda yig'iladi: frontend deploy domenini bilmaydi, backend esa
 		// uni WEB_MENU_BASE_URL orqali biladi.
 		"web_menu_url": strings.TrimSuffix(h.Cfg.WebMenuBaseURL, "/") + "/menyu/" + businessCode,
+		// WEB_MENU_BASE_URL serverda ko'rsatilganmi. false bo'lsa yuqoridagi
+		// havola localhost'ga ishora qiladi — interfeys uni ogohlantirish
+		// bilan ko'rsatadi, aks holda kafe ochilmaydigan havolani ulashadi.
+		"web_menu_url_configured": h.Cfg.WebMenuBaseURLSet,
 	})
 }
 
