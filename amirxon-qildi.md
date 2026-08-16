@@ -896,3 +896,132 @@ faqat haqiqiy Telegram beradi, bot tokeni esa hozir yo'q.
 
 Sinov ma'lumotlari (soxta buyurtmalar va vaqtinchalik hisoblar) bazadan
 tozalandi.
+
+---
+
+## 8-bosqich — Obuna kafe qo'lidan olindi, Telegram Mini App'ga profil qo'shildi (2026-08-16)
+
+Ikkita mustaqil ish. Ikkalasi ham loyihani to'liq o'rganib chiqishdan
+keyin aniqlangan kamchiliklarga javob.
+
+### 8.1. Obunani kafe o'zgartira olmasligi
+
+**Muammo.** `POST /api/v1/settings/subscription` bor edi va `settings.edit`
+vakolati bo'lgan har kim (kafe egasi yoki admin) tarifni bir bosishda
+`full` ga ko'tara olardi. To'lov **umuman so'ralmasdi** — kodda
+`// TODO: Payme/Click` deb turardi. Ya'ni pullik funksiyalar (QR menyu,
+Telegram bot, online buyurtma) bepul ochilardi.
+
+**Yechim.** Tarif endi butunlay super-admin ixtiyorida. U yerda ishlaydigan
+endpoint allaqachon bor edi (`platform.SetSubscription`), shuning uchun
+yangi kod yozilmadi — faqat kafe tomonidagi yo'l olib tashlandi.
+
+| Fayl | O'zgarish |
+|---|---|
+| `handlers/settings.go` | `UpdateSubscription` o'chirildi, o'rniga nega olib tashlangani izohda |
+| `handlers/platform.go` | `subscriptionPlans` shu yerga ko'chirildi — endi uni faqat super-admin ishlatadi |
+| `handlers/routes.go` | `/settings/subscription` yo'li olib tashlandi |
+| `SettingsPage.tsx` | Obuna bo'limi butunlay olib tashlandi |
+| `endpoints.ts` | `updateSubscription` va keraksiz qolgan `SubscriptionPlan` importi |
+| `i18n/dictionaries.ts` | 11 ta obuna kaliti uchala lug'atdan (uz/ru/en) |
+
+`GET /settings` javobida `subscription_plan/status/ends_at` **qoldirildi** —
+faqat o'qish uchun, API kontrakti buzilmasin.
+
+### 8.2. Mijoz profili va buyurtmalar tarixi
+
+**Muammo.** Mijoz Mini App'da oldingi buyurtmalarini umuman ko'ra olmasdi
+va har checkout'da ism/telefon/manzilni boshidan yozardi.
+
+**Muhim kuzatuv:** `telegram_customers` jadvalida `phone`, `location_lat`,
+`location_lng` ustunlari **001-migratsiyadan beri bor edi, lekin Go kodida
+bir marta ham ishlatilmagan** — aynan shu maqsad uchun qo'yilgan va
+qurilmay qolgan.
+
+**Migratsiya `013_telegram_customer_profile.sql`:** `delivery_address`,
+`delivery_note` ustunlari va `idx_orders_telegram_customer` indeksi.
+
+**Yangi endpointlar** (`handlers/telegram.go`):
+
+- `GET /api/v1/telegram/me?business_code=<kod>` — profil + oxirgi 20 buyurtma
+- `PATCH /api/v1/telegram/me?business_code=<kod>` — telefon/manzil/mo'ljal
+
+Auth JWT emas: `Authorization: tma <initData>` sarlavhasi. Sarlavha
+tanlandi, chunki initData mijozning ismi va telegram ID'sini o'z ichiga
+oladi — URL'da bo'lsa server loglariga tushib qolardi. `Authorization`
+esa CORS ro'yxatida allaqachon ruxsat etilgan edi.
+
+`strings.CutPrefix` ishlatildi, `TrimPrefix` emas: `TrimPrefix` prefiks
+bo'lmasa satrni o'zgarishsiz qaytaradi, ya'ni `Bearer <jwt>` ham initData
+deb o'qilib ketardi. (Xuddi shu xato `telegram-bot/main.go` da hali
+turibdi — alohida tuzatiladi.)
+
+**Tarix to'liq bo'lishi uchun ikkita tuzatish:**
+
+1. `CreateOrder` — ilgari `telegram_customer_id` faqat **yangi** buyurtmada
+   yozilardi. Mijoz kassir ochgan hisobga taom qo'shsa, buyurtma unga
+   bog'lanmasdi: tarixda ko'rinmasdi va chekni Telegram orqali yuborib ham
+   bo'lmasdi. Endi `COALESCE(telegram_customer_id, $1)` — bo'sh bo'lsa
+   to'ldiriladi, band bo'lsa tegilmaydi (bitta stolda ikki kishi buyurtma
+   bersa, birinchisi egasi bo'lib qoladi).
+
+2. `weborder.go` — `init_data` **ixtiyoriy** maydon sifatida qabul
+   qilinadi. Telegram ichidan berilgan yetkazib berish/olib ketish
+   buyurtmasi endi profilga bog'lanadi. Bo'sh bo'lsa hech narsa
+   o'zgarmaydi, imzo noto'g'ri bo'lsa buyurtma **rad etilmaydi** — faqat
+   bog'lanmaydi va log'ga yoziladi. Bu endpointning butun mazmuni auth
+   talab qilmaslik: hisob ochish talab qilinsa mijozlarning katta qismi
+   yo'qoladi.
+
+Buyurtmadan keyin profil "o'rganadi": telefon/manzil profilda bo'sh bo'lsa
+saqlanadi. `COALESCE` ataylab — bir martalik buyurtma manzili (do'stnikiga
+yetkazish) mijoz ataylab qo'ygan uy manzilini almashtirib yubormasligi
+kerak.
+
+**Frontend** (`frontend-telegram`): yangi `ProfileScreen.tsx` (avatar,
+ism/@username, statistika, tahrirlanadigan telefon/manzil/mo'ljal,
+buyurtmalar tarixi), `Header.tsx` ga 👤 tugmasi, `App.tsx` va
+`WebMenu.tsx` da `'profile'` ko'rinishi, `WebCheckout.tsx` da profildan
+oldindan to'ldirish.
+
+Profil tugmasi **faqat Telegram ichida** ko'rinadi (`isRunningInTelegram`,
+ya'ni `initData` bor-yo'qligi) — Instagram havolasidan oddiy brauzerda
+kirgan mijozda shaxs yo'q.
+
+Checkout faqat **bo'sh** maydonlarni to'ldiradi (funksional `setState`):
+so'rov qaytguncha mijoz yozib ulgurgan bo'lsa, yozganini bosib ketmaydi.
+
+### 8.3. Sinovlar
+
+Yig'ish: `go build`, `go vet`, `gofmt` va uchala frontendda `tsc -b` — toza.
+
+Server lokal ishga tushirildi, `013` migratsiyasi avtomatik qo'llandi.
+Telegram imzosi test bot tokeni bilan haqiqiy algoritm
+(`HMAC-SHA256("WebAppData", botToken)`) bo'yicha yasab sinaldi.
+
+| # | Holat | Natija |
+|---|---|---|
+| 1 | `POST /settings/subscription` | 404 — endpoint yo'q |
+| 2 | Super-admin `/businesses/:id/subscription` | ishlaydi |
+| 3 | Login + `GET /settings` | regressiya yo'q |
+| 4 | `GET /telegram/me` sarlavhasiz | 401 |
+| 5 | `Authorization: Bearer <jwt>` bilan | 401 — `CutPrefix` ishlayapti |
+| 6 | Soxta `hash` | 401 "initData imzosi noto'g'ri" |
+| 7 | To'g'ri imzo, yangi mijoz | 200, bo'sh tarix, bazaga yozilmaydi |
+| 8 | `PATCH` telefon/manzil/mo'ljal | 200, keyingi `GET` da qaytadi |
+| 9 | `PATCH` telefon 21 belgi | 400 (ustun `VARCHAR(20)`) |
+| 10 | `POST /web/order` **`init_data` siz** | 201 — regressiya yo'q |
+| 11 | `POST /web/order` `init_data` bilan | 201, profilga bog'landi |
+| 12 | Buyurtmada boshqa telefon/manzil | profildagi qiymat almashtirilmadi |
+| 13 | `dine_in` / `delivery` tarixda | `public_token` faqat `delivery` da |
+| 14 | Buyurtma to'langandan keyin | `total_spent` 0 → 35000 |
+| 15 | Kassir hisobiga Telegram mijozi qo'shdi | hisob profilda paydo bo'ldi (`COALESCE`) |
+
+### 8.4. Hali sinalmagani
+
+Telegram WebApp haqiqiy Telegram ichida hali ham sinalmagan (7.5 dagi
+holat o'zgarmadi): imzo lokalda test tokeni bilan yasaldi, haqiqiy
+Telegram mijozi bilan emas. Profil tugmasi, avatar (`photo_url`) va QR
+skaner deploy'dan keyin haqiqiy Telegram ichida tekshirilishi kerak.
+
+Sinov ma'lumotlari lokal demo bazada qoldi (productionga aloqasi yo'q).
