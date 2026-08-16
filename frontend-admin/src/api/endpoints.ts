@@ -15,7 +15,6 @@ import type {
   Settings,
   Staff,
   StaffPermissions,
-  SubscriptionPlan,
   Table,
 } from './types';
 
@@ -259,8 +258,8 @@ export const updateSettings = (body: {
   min_order_amount?: number;
 }) => apiClient.patch('/settings', body).then((r) => r.data);
 
-export const updateSubscription = (plan: SubscriptionPlan) =>
-  apiClient.post('/settings/subscription', { plan }).then((r) => r.data);
+// Obunani o'zgartirish endpointi yo'q: tarifni faqat super-admin belgilaydi.
+// Kafe o'z tarifini GET /settings javobida faqat o'qiy oladi.
 
 // WebSocket manzili: brauzerning WebSocket API'si Authorization sarlavhasini
 // yubora olmaydi, shuning uchun token so'rov parametrida beriladi.

@@ -1,19 +1,19 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import QRCode from 'qrcode';
-import {
-  getSettings,
-  getTestReceipt,
-  updateSettings,
-  updateSubscription,
-} from '../api/endpoints';
-import type { SubscriptionPlan } from '../api/types';
+import { getSettings, getTestReceipt, updateSettings } from '../api/endpoints';
 import { tryPrintReceipt } from '../printer';
 import { useTranslation } from '../i18n/LanguageContext';
-import type { TranslationKey } from '../i18n/dictionaries';
 
-const PLANS: SubscriptionPlan[] = ['basic', 'qr', 'full'];
-
+/**
+ * Kafe sozlamalari.
+ *
+ * OBUNA BO'LIMI BU YERDA YO'Q. Ilgari kafe o'z tarifini shu sahifadan
+ * tanlay olardi va hech qanday to'lov so'ralmasdi — ya'ni pullik
+ * funksiyalarni (QR menyu, Telegram bot, online buyurtma) bir bosishda
+ * bepul ochib olish mumkin edi. Tarifni endi faqat super-admin belgilaydi
+ * (super-admin paneli → Obunalar).
+ */
 export default function SettingsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -58,14 +58,6 @@ export default function SettingsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] });
       setMessage(t('app.saved'));
-    },
-  });
-
-  const planMutation = useMutation({
-    mutationFn: (plan: SubscriptionPlan) => updateSubscription(plan),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['settings'] });
-      setMessage(t('settings.planChanged'));
     },
   });
 
@@ -208,50 +200,6 @@ export default function SettingsPage() {
       >
         {saveMutation.isPending ? t('app.saving') : t('app.save')}
       </button>
-
-      {/* --- Obuna --- */}
-      <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-sm font-semibold text-slate-800">{t('settings.subscription')}</h2>
-        <p className="text-xs text-slate-500">
-          {t('settings.currentPlan')}:{' '}
-          <span className="font-medium text-slate-800">
-            {t(`settings.plan.${settings.subscription_plan}` as TranslationKey)}
-          </span>{' '}
-          ({settings.subscription_status})
-        </p>
-
-        <div className="grid gap-2 sm:grid-cols-3">
-          {PLANS.map((plan) => {
-            const isCurrent = settings.subscription_plan === plan;
-            return (
-              <div
-                key={plan}
-                className={`rounded-lg border p-3 ${
-                  isCurrent ? 'border-indigo-400 bg-indigo-50/60' : 'border-slate-200'
-                }`}
-              >
-                <p className="text-sm font-semibold text-slate-900">
-                  {t(`settings.plan.${plan}` as TranslationKey)}
-                </p>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  {t(`settings.plan.${plan}Desc` as TranslationKey)}
-                </p>
-                <button
-                  onClick={() => planMutation.mutate(plan)}
-                  disabled={isCurrent || planMutation.isPending}
-                  className="mt-2 w-full rounded-lg border border-indigo-200 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
-                >
-                  {isCurrent ? t('settings.currentPlan') : t('settings.choosePlan')}
-                </button>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* TODO: Payme/Click integratsiyasi — tarif tanlanganda to'lov shu
-            yerdan boshlanadi. Hozircha to'lov so'ralmaydi. */}
-        <p className="text-xs text-amber-700">💳 {t('settings.paymentRequired')}</p>
-      </section>
     </div>
   );
 }

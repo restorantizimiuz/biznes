@@ -16,9 +16,6 @@ type SettingsHandler struct {
 	Cfg *config.Config
 }
 
-// Obuna tariflari. Qiymatlar subscription_plan enum'iga mos bo'lishi shart.
-var subscriptionPlans = map[string]bool{"basic": true, "qr": true, "full": true}
-
 func (h *SettingsHandler) GetSettings(c *fiber.Ctx) error {
 	businessID := c.Locals("business_id").(string)
 	ctx := context.Background()
@@ -82,6 +79,17 @@ func (h *SettingsHandler) GetSettings(c *fiber.Ctx) error {
 		"web_menu_url": strings.TrimSuffix(h.Cfg.WebMenuBaseURL, "/") + "/menyu/" + businessCode,
 	})
 }
+
+// Obuna kafe tomonidan **o'zgartirilmaydi**.
+//
+// Ilgari bu yerda UpdateSubscription bor edi: `settings.edit` vakolati bo'lgan
+// har kim (kafe egasi yoki admin) tarifni bemalol `full` ga ko'tara olardi va
+// hech qanday to'lov so'ralmasdi — ya'ni pullik funksiyalar (QR menyu,
+// Telegram bot, online buyurtma) bir bosishda bepul ochilardi.
+//
+// Endi tarifni faqat super-admin belgilaydi:
+// POST /api/v1/platform/businesses/:id/subscription (platform.go, SetSubscription).
+// Kafe o'z tarifini GET /settings javobida faqat **o'qiy** oladi.
 
 // updateSettingsRequest - printer maydonlari **ko'rsatkich** (pointer),
 // chunki ular bo'sh satrga ham o'rnatilishi mumkin (printerni o'chirish).
@@ -149,43 +157,4 @@ func (h *SettingsHandler) UpdateSettings(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 	return c.JSON(fiber.Map{"success": true})
-}
-
-// UpdateSubscription - kafe o'z tarifini o'zgartiradi.
-//
-// TODO: Payme/Click integratsiyasi. Hozircha to'lov **talab qilinmaydi** —
-// tanlangan tarif darhol yoziladi. To'lov qo'shilganda shu funksiya ichida
-// avval to'lov yaratiladi (provayder API), muvaffaqiyatli javobdan keyingina
-// subscriptions jadvaliga yozuv qo'shiladi.
-func (h *SettingsHandler) UpdateSubscription(c *fiber.Ctx) error {
-	businessID := c.Locals("business_id").(string)
-
-	var body struct {
-		Plan string `json:"plan"`
-	}
-	if err := c.BodyParser(&body); err != nil || !subscriptionPlans[body.Plan] {
-		return c.Status(400).JSON(fiber.Map{"error": "Tarif noto'g'ri (basic, qr yoki full)"})
-	}
-
-	ctx := context.Background()
-
-	// Yangi tarif joriy obuna tugash sanasini saqlab qoladi — tarif
-	// o'zgartirish muddatni qisqartirmasligi kerak.
-	var endsAt interface{}
-	if err := h.DB.QueryRow(ctx,
-		`SELECT ends_at FROM subscriptions WHERE business_id=$1 ORDER BY created_at DESC LIMIT 1`,
-		businessID).Scan(&endsAt); err != nil {
-		endsAt = nil
-	}
-
-	var id string
-	err := h.DB.QueryRow(ctx, `
-		INSERT INTO subscriptions (business_id, plan, status, ends_at, created_by_admin)
-		VALUES ($1, $2, 'active', COALESCE($3::timestamptz, now() + interval '30 days'), 'self-service')
-		RETURNING id`, businessID, body.Plan, endsAt).Scan(&id)
-	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-	}
-
-	return c.JSON(fiber.Map{"success": true, "plan": body.Plan, "payment_required": false})
 }

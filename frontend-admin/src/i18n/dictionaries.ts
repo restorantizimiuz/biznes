@@ -221,7 +221,6 @@ const uz = {
 
   'settings.title': 'Sozlamalar',
   'settings.cafeName': 'Kafe nomi',
-  'settings.subscription': 'Obuna turi',
   'settings.language': 'Til',
   'settings.languageNote':
     "Til faqat interfeys matnlarini o'zgartiradi — stol, menyu va mahsulot nomlari siz kiritgan holicha qoladi.",
@@ -315,17 +314,8 @@ const uz = {
 
   // --- Sozlamalar ---
   'settings.cafeNameHint': "Bu nom chekda va Telegram menyusida ko'rinadi",
-  'settings.plan.basic': 'Oddiy',
-  'settings.plan.qr': 'QR menyu bilan',
-  'settings.plan.full': "To'liq (online + Telegram)",
-  'settings.plan.basicDesc': 'Kassa, menyu, stollar va hisobot',
-  'settings.plan.qrDesc': "Oddiy tarif + stol QR menyusi",
-  'settings.plan.fullDesc': 'QR tarif + Telegram bot va online buyurtmalar',
-  'settings.currentPlan': 'Joriy tarif',
-  'settings.choosePlan': 'Tarifni tanlash',
-  'settings.paymentRequired':
-    "Bu tarif uchun to'lov talab qilinadi (hozircha to'lov so'ralmaydi)",
-  'settings.planChanged': "Tarif o'zgartirildi",
+  // Obuna/tarif kalitlari bu yerdan olib tashlandi: tarifni endi faqat
+  // super-admin belgilaydi, kafe sozlamalarida bunday bo'lim yo'q.
   'settings.printer': 'Chek printeri',
   'settings.printerMode': 'Ulanish turi',
   'settings.printerOff': "O'chirilgan",
@@ -573,7 +563,6 @@ const ru: Dictionary = {
 
   'settings.title': 'Настройки',
   'settings.cafeName': 'Название кафе',
-  'settings.subscription': 'Тип подписки',
   'settings.language': 'Язык',
   'settings.languageNote':
     'Язык меняет только текст интерфейса — названия столов, меню и блюд остаются такими, как вы их ввели.',
@@ -666,16 +655,6 @@ const ru: Dictionary = {
 
   // --- Настройки ---
   'settings.cafeNameHint': 'Это название видно в чеке и в меню Telegram',
-  'settings.plan.basic': 'Базовый',
-  'settings.plan.qr': 'С QR-меню',
-  'settings.plan.full': 'Полный (онлайн + Telegram)',
-  'settings.plan.basicDesc': 'Касса, меню, столы и отчёт',
-  'settings.plan.qrDesc': 'Базовый тариф + QR-меню на столах',
-  'settings.plan.fullDesc': 'Тариф QR + Telegram-бот и онлайн-заказы',
-  'settings.currentPlan': 'Текущий тариф',
-  'settings.choosePlan': 'Выбрать тариф',
-  'settings.paymentRequired': 'Этот тариф платный (оплата пока не запрашивается)',
-  'settings.planChanged': 'Тариф изменён',
   'settings.printer': 'Чековый принтер',
   'settings.printerMode': 'Тип подключения',
   'settings.printerOff': 'Отключён',
@@ -917,7 +896,6 @@ const en: Dictionary = {
 
   'settings.title': 'Settings',
   'settings.cafeName': 'Cafe name',
-  'settings.subscription': 'Subscription',
   'settings.language': 'Language',
   'settings.languageNote':
     'Language only changes interface text — table, menu and item names stay exactly as you entered them.',
@@ -1011,16 +989,6 @@ const en: Dictionary = {
 
   // --- Settings ---
   'settings.cafeNameHint': 'This name appears on receipts and in the Telegram menu',
-  'settings.plan.basic': 'Basic',
-  'settings.plan.qr': 'With QR menu',
-  'settings.plan.full': 'Full (online + Telegram)',
-  'settings.plan.basicDesc': 'Register, menu, tables and reports',
-  'settings.plan.qrDesc': 'Basic plan + QR menu on tables',
-  'settings.plan.fullDesc': 'QR plan + Telegram bot and online orders',
-  'settings.currentPlan': 'Current plan',
-  'settings.choosePlan': 'Choose plan',
-  'settings.paymentRequired': 'This plan is paid (payment is not requested yet)',
-  'settings.planChanged': 'Plan changed',
   'settings.printer': 'Receipt printer',
   'settings.printerMode': 'Connection type',
   'settings.printerOff': 'Disabled',

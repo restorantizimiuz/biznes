@@ -230,9 +230,12 @@ func RegisterRoutes(app *fiber.App, db *pgxpool.Pool, rdb *redis.Client, hub *no
 	closedEdit.Post("/revert", reports.RevertOrder)
 
 	// Sozlamalar. O'qish barchaga ochiq — interfeys tili shu javobdan olinadi.
+	//
+	// Obunani o'zgartirish yo'li bu yerda **ataylab yo'q**: tarifni faqat
+	// super-admin belgilaydi (platformGroup dagi /businesses/:id/subscription).
+	// Qarang: settings.go oxiridagi izoh.
 	settings := &SettingsHandler{DB: db, Cfg: cfg}
 	settingsEdit := middleware.RequirePermission(db, middleware.PermSettingsEdit)
 	protected.Get("/settings", settings.GetSettings)
 	protected.Patch("/settings", settingsEdit, settings.UpdateSettings)
-	protected.Post("/settings/subscription", settingsEdit, settings.UpdateSubscription)
 }

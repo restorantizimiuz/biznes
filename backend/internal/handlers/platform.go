@@ -35,6 +35,14 @@ type PlatformHandler struct {
 	Cfg *config.Config
 }
 
+// Obuna tariflari. Qiymatlar subscription_plan enum'iga mos bo'lishi shart.
+//
+// Bu ro'yxat ataylab shu faylda: tarifni belgilash **faqat super-admin**
+// vakolati (CreateBusiness va SetSubscription). Ilgari u settings.go da edi
+// va kafening o'zi tarifini o'zgartira olardi — qarang: settings.go dagi
+// izoh.
+var subscriptionPlans = map[string]bool{"basic": true, "qr": true, "full": true}
+
 // Barcha boshqariladigan funksiya kalitlari — interfeys shu ro'yxatni ko'rsatadi.
 var platformFeatureKeys = []string{
 	middleware.FeatureQRMenu,
