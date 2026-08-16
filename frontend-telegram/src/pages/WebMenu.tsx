@@ -3,8 +3,6 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { getMenuByBusinessCode } from '../api';
 import type { MenuResponse, Product } from '../types';
 import { useCart } from '../hooks/useCart';
-import { getTelegramWebApp, isRunningInTelegram } from '../telegram';
-import { parseTableQrUrl } from '../utils/qrParser';
 import Header from '../components/Header';
 import SearchBar from '../components/SearchBar';
 import CategoryList from '../components/CategoryList';
@@ -15,8 +13,6 @@ import EmptyState from '../components/EmptyState';
 import { SkeletonGrid } from '../components/SkeletonCard';
 import WebCheckout from './WebCheckout';
 
-const tg = getTelegramWebApp();
-
 type Stage = 'loading' | 'error' | 'menu';
 type View = 'categories' | 'products' | 'cart';
 
@@ -25,8 +21,13 @@ type View = 'categories' | 'products' | 'cart';
  *
  * Telegram'dan farqi: hisob ochish ham, bot ham kerak emas; mijoz uyda
  * o'tirib menyuni ko'radi, savat to'ldiradi va yetkazib berish yoki olib
- * ketishga buyurtma beradi. Stol buyurtmasi bu sahifada umuman yo'q —
- * u Telegram/QR orqali beriladi.
+ * ketishga buyurtma beradi.
+ *
+ * Stolga buyurtma tanlovi bu sahifada EMAS — u checkout'dagi ("Buyurtma
+ * turi" bo'limi) uchinchi variant sifatida ko'rinadi (qarang:
+ * WebCheckout.tsx). Sabab: mijoz avval menyuni ko'rib mahsulot tanlashi
+ * kerak, stol/yetkazib berish/olib ketish tanlovi esa savatdan keyingi
+ * qadam — bu tanlovni menyu tepasiga chiqarish chalg'itardi.
  *
  * Menyu ko'rish komponentlari (ProductCard, CategoryList, SearchBar,
  * ProductModal, CartBar) Telegram ilovasi bilan **umumiy** — takrorlanmaydi.
@@ -42,26 +43,6 @@ export default function WebMenu() {
   const [openCategoryId, setOpenCategoryId] = useState('');
   const [activeProduct, setActiveProduct] = useState<Product | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [scanError, setScanError] = useState('');
-
-  // Stolda o'tirgan mijoz uchun: Telegram'ning o'z QR skaneri orqali stol
-  // tokenini olib, mavjud stol-buyurtma ekraniga (App.tsx, "/?table=...")
-  // o'tkazadi — yangi savat/buyurtma tizimi yaratilmaydi, faqat marshrut
-  // almashadi. Faqat Telegram ichida ishlaydi (oddiy brauzerda tugma
-  // ko'rinmaydi), chunki showScanQrPopup faqat Telegram WebView'da mavjud.
-  function handleScanTable() {
-    if (!tg?.showScanQrPopup) return;
-    setScanError('');
-    tg.showScanQrPopup({ text: 'Stolingizdagi QR kodni skanerlang' }, (scanned) => {
-      const token = parseTableQrUrl(scanned);
-      if (token) {
-        navigate(`/?table=${encodeURIComponent(token)}`);
-        return true; // popupni yopadi
-      }
-      setScanError("Bu QR kod restoranning stol kodi emas. Qayta urinib ko'ring.");
-      return false; // popup ochiq qoladi, mijoz qayta skanerlashi mumkin
-    });
-  }
 
   useEffect(() => {
     if (!businessCode) {
@@ -142,6 +123,7 @@ export default function WebMenu() {
           cart.clear();
           navigate(`/buyurtma/${publicToken}`);
         }}
+        onTableFound={(token) => navigate(`/?table=${encodeURIComponent(token)}`)}
       />
     );
   }
@@ -170,20 +152,6 @@ export default function WebMenu() {
           </header>
         ) : (
           <Header businessName={menu?.business_name ?? ''} />
-        )}
-
-        {view !== 'products' && tg && isRunningInTelegram(tg) && tg.showScanQrPopup && (
-          <div className="px-4 pb-2">
-            <button
-              onClick={handleScanTable}
-              className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-md)] border-2 border-dashed border-[var(--color-accent)] bg-[var(--color-surface)] px-3 py-2.5 text-[13px] font-semibold text-[var(--color-accent)] transition active:scale-[0.98]"
-            >
-              📷 Stol uchun buyurtma (QR skanerlash)
-            </button>
-            {scanError && (
-              <p className="mt-1.5 text-[12px] text-[var(--color-danger)]">{scanError}</p>
-            )}
-          </div>
         )}
 
         <div className="px-4 pb-1">

@@ -1,5 +1,6 @@
 import type { CartLine } from '../types';
 import { formatMoney } from '../utils/format';
+import { resolveImageUrl } from '../api';
 import QuantityControl from './QuantityControl';
 
 export default function CartItem({
@@ -12,11 +13,16 @@ export default function CartItem({
   onDecrement: (id: string) => void;
 }) {
   const { product, quantity } = line;
+  // Backend nisbiy yo'l qaytaradi ("/uploads/..."), shuning uchun
+  // ProductCard'dagi kabi resolveImageUrl orqali backend domeniga
+  // to'liq havolaga aylantiriladi — aks holda rasm frontend domeniga
+  // (mavjud bo'lmagan yo'l) ishora qilib, buzilgan chiqardi.
+  const imageSrc = resolveImageUrl(product.image_url);
   return (
     <div className="flex items-center gap-3 py-3">
       <div className="h-14 w-14 shrink-0 overflow-hidden rounded-[var(--radius-sm)] bg-[var(--color-border)]">
-        {product.image_url ? (
-          <img src={product.image_url} alt={product.name} className="h-full w-full object-cover" />
+        {imageSrc ? (
+          <img src={imageSrc} alt={product.name} className="h-full w-full object-cover" />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-lg">🍽️</div>
         )}

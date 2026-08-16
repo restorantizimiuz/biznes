@@ -175,9 +175,16 @@ func (h *QRHandler) GetMenuByBusinessCode(c *fiber.Ctx) error {
 		"business_id":   businessID,
 		"business_name": businessName,
 		"categories":    result,
-		// Uydan buyurtma sahifasi shu bayroqlarga qarab "Yetkazib berish"/
-		// "Olib ketish" tugmalarini ko'rsatadi yoki yashiradi.
+		// Uydan buyurtma sahifasi shu bayroqlarga qarab "Stolga buyurtma"/
+		// "Yetkazib berish"/"Olib ketish" tugmalarini ko'rsatadi yoki
+		// yashiradi. dine_in — Telegram QR-skaner orqali stol tanlab
+		// buyurtma berish oqimi haqiqatan ishlashini bildiradi: u
+		// POST /telegram/:table_token/order orqali yuboriladi, bu
+		// endpoint FeatureTelegramBot bilan himoyalangan — shuning uchun
+		// shu bayroqning o'zi ishlatiladi (button ko'rinishi = so'rov
+		// muvaffaqiyatli bo'lishi bilan mos keladi).
 		"order_types": fiber.Map{
+			"dine_in":  middleware.FeatureEnabled(ctx, h.DB, businessID, middleware.FeatureTelegramBot),
 			"delivery": middleware.FeatureEnabled(ctx, h.DB, businessID, middleware.FeatureDelivery),
 			"pickup":   middleware.FeatureEnabled(ctx, h.DB, businessID, middleware.FeaturePickup),
 		},

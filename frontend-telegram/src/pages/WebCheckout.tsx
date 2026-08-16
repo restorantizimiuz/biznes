@@ -2,15 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import { createWebOrder, reverseGeocode } from '../api';
 import type { CartLine, PaymentMethod } from '../types';
 import { formatMoney } from '../utils/format';
+import { getTelegramWebApp, isRunningInTelegram } from '../telegram';
+import { parseTableQrUrl } from '../utils/qrParser';
 import CartItem from '../components/CartItem';
 import EmptyState from '../components/EmptyState';
 import MapPicker from '../maps/MapPicker';
 
+const tg = getTelegramWebApp();
+
 type OnlineType = 'delivery' | 'pickup';
 
 const ORDER_TYPES: { id: OnlineType; emoji: string; label: string; hint: string }[] = [
-  { id: 'delivery', emoji: '🚚', label: 'Yetkazib berish', hint: 'Manzilingizga olib boramiz' },
   { id: 'pickup', emoji: '🥡', label: 'Olib ketish', hint: 'O‘zingiz kelib olasiz' },
+  { id: 'delivery', emoji: '🚚', label: 'Yetkazib berish', hint: 'Manzilingizga olib boramiz' },
 ];
 
 const PAYMENT_METHODS: { id: PaymentMethod; emoji: string; label: string }[] = [
@@ -38,24 +42,52 @@ export default function WebCheckout({
   onIncrement,
   onDecrement,
   onOrdered,
+  onTableFound,
 }: {
   businessCode: string;
   businessName: string;
   // Superadmin har bir turni alohida yoqadi/o'chiradi (backend: order_types).
-  // Kelmasa (masalan eski keshdagi javob) ikkalasi ham ochiq deb hisoblanadi —
+  // Kelmasa (masalan eski keshdagi javob) hammasi ochiq deb hisoblanadi —
   // FeatureEnabled'dagi "yozuv yo'q = yoqilgan" qoidasi bilan bir xil.
-  orderTypes?: { delivery: boolean; pickup: boolean };
+  orderTypes?: { dine_in: boolean; delivery: boolean; pickup: boolean };
   lines: CartLine[];
   total: number;
   onBack: () => void;
   onIncrement: (id: string) => void;
   onDecrement: (id: string) => void;
   onOrdered: (publicToken: string) => void;
+  // Stol QR kodi muvaffaqiyatli skanerlanganda chaqiriladi — WebMenu.tsx
+  // buni mavjud stol-buyurtma marshrutiga (App.tsx, "/?table=...") o'tish
+  // uchun ishlatadi. Bu ekran o'z savatini/holatini shu bilan tark etadi:
+  // stol buyurtmasi butunlay boshqa, mustaqil oqim (App.tsx o'z menyusi,
+  // o'z savati, o'z checkout'i bilan).
+  onTableFound: (tableToken: string) => void;
 }) {
   const availableOrderTypes = ORDER_TYPES.filter((t) => orderTypes?.[t.id] ?? true);
   const [orderType, setOrderType] = useState<OnlineType>(
     () => availableOrderTypes[0]?.id ?? 'delivery',
   );
+  const [scanError, setScanError] = useState('');
+  const canDineIn = Boolean(orderTypes?.dine_in ?? true) && Boolean(tg && isRunningInTelegram(tg) && tg.showScanQrPopup);
+
+  // "🍽 Stolga buyurtma" bosilganda: mavjud fizik stol QR kodini Telegram'ning
+  // o'z skaneri orqali o'qiydi. Stol raqamini qo'lda tanlash yo'q — faqat
+  // haqiqiy QR orqali aniqlanadi (xavfsizlik: har kim istalgan stolga
+  // "buyurtma qilaman" deb yozib qo'ymasligi uchun).
+  function handleScanTable() {
+    if (!tg?.showScanQrPopup) return;
+    setScanError('');
+    tg.showScanQrPopup({ text: 'Stolingizdagi QR kodni skanerlang' }, (scanned) => {
+      const token = parseTableQrUrl(scanned);
+      if (token) {
+        onTableFound(token);
+        return true; // popupni yopadi
+      }
+      setScanError("Bu QR kod restoranning stol kodi emas. Qayta urinib ko'ring.");
+      return false; // popup ochiq qoladi, mijoz qayta skanerlashi mumkin
+    });
+  }
+
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
@@ -184,7 +216,7 @@ export default function WebCheckout({
       <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
         {lines.length === 0 ? (
           <EmptyState emoji="🛒" title="Savat bo'sh" subtitle="Menyudan mahsulot tanlang" />
-        ) : availableOrderTypes.length === 0 ? (
+        ) : availableOrderTypes.length === 0 && !canDineIn ? (
           <EmptyState
             emoji="🚫"
             title="Uydan buyurtma vaqtincha to'xtatilgan"
@@ -205,6 +237,25 @@ export default function WebCheckout({
 
             <Section title="Buyurtma turi">
               <div className="space-y-2">
+                {canDineIn && (
+                  <button
+                    onClick={handleScanTable}
+                    className="flex w-full items-center gap-3 rounded-[var(--radius-md)] border-2 border-dashed border-[var(--color-accent)] bg-[var(--color-surface)] p-3 text-left transition active:scale-[0.98]"
+                  >
+                    <span className="text-2xl">🍽</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[15px] font-semibold text-[var(--color-text)]">
+                        Stolga buyurtma
+                      </p>
+                      <p className="text-[12px] text-[var(--color-text-secondary)]">
+                        QR orqali stolni aniqlash
+                      </p>
+                    </div>
+                  </button>
+                )}
+                {scanError && (
+                  <p className="text-[12px] text-[var(--color-danger)]">{scanError}</p>
+                )}
                 {availableOrderTypes.map((type) => (
                   <button
                     key={type.id}
@@ -228,93 +279,97 @@ export default function WebCheckout({
               </div>
             </Section>
 
-            <Section title="Aloqa">
-              <div className="space-y-2">
-                <Input value={name} onChange={setName} placeholder="Ismingiz" />
-                <Input
-                  value={phone}
-                  onChange={setPhone}
-                  placeholder="Telefon raqamingiz (+998 ...)"
-                  type="tel"
-                />
-              </div>
-            </Section>
-
-            {orderType === 'delivery' && (
-              <Section title="Yetkazib berish manzili">
-                <div className="space-y-2">
-                  <div className="flex gap-2">
-                    <button
-                      onClick={handleLocateMe}
-                      disabled={locating}
-                      className="flex-1 rounded-full bg-[var(--color-accent)] px-3 py-2.5 text-[13px] font-semibold text-[var(--color-accent-text)] disabled:opacity-60"
-                    >
-                      {locating ? 'Joylashuv aniqlanmoqda...' : '📍 Mening joylashuvim'}
-                    </button>
-                    <button
-                      onClick={() => setShowMap((v) => !v)}
-                      className="rounded-full border border-[var(--color-border)] px-3 py-2.5 text-[13px] text-[var(--color-text-secondary)]"
-                    >
-                      {showMap ? 'Xaritani yopish' : 'Xaritadan tanlash'}
-                    </button>
+            {availableOrderTypes.length > 0 && (
+              <>
+                <Section title="Aloqa">
+                  <div className="space-y-2">
+                    <Input value={name} onChange={setName} placeholder="Ismingiz" />
+                    <Input
+                      value={phone}
+                      onChange={setPhone}
+                      placeholder="Telefon raqamingiz (+998 ...)"
+                      type="tel"
+                    />
                   </div>
+                </Section>
 
-                  {showMap && (
-                    <>
-                      <MapPicker value={point} onChange={setPoint} />
-                      <p className="text-[11.5px] text-[var(--color-text-secondary)]">
-                        Xaritani suring — nishon turgan joy sizning manzilingiz bo'ladi.
-                      </p>
-                    </>
-                  )}
+                {orderType === 'delivery' && (
+                  <Section title="Yetkazib berish manzili">
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <button
+                          onClick={handleLocateMe}
+                          disabled={locating}
+                          className="flex-1 rounded-full bg-[var(--color-accent)] px-3 py-2.5 text-[13px] font-semibold text-[var(--color-accent-text)] disabled:opacity-60"
+                        >
+                          {locating ? 'Joylashuv aniqlanmoqda...' : '📍 Mening joylashuvim'}
+                        </button>
+                        <button
+                          onClick={() => setShowMap((v) => !v)}
+                          className="rounded-full border border-[var(--color-border)] px-3 py-2.5 text-[13px] text-[var(--color-text-secondary)]"
+                        >
+                          {showMap ? 'Xaritani yopish' : 'Xaritadan tanlash'}
+                        </button>
+                      </div>
 
-                  {/* Manzil matni har doim tahrirlanadi: xarita uni faqat
-                      taklif qiladi va ko'pincha uy raqamini bilmaydi. */}
-                  <Input
-                    value={address}
-                    onChange={(v) => {
-                      addressTouched.current = true;
-                      setAddress(v);
-                    }}
-                    placeholder="Ko'cha, uy raqami"
-                  />
-                  <Input
-                    value={note}
-                    onChange={setNote}
-                    placeholder="Mo'ljal: podyezd, qavat, domofon"
-                  />
-                </div>
-              </Section>
+                      {showMap && (
+                        <>
+                          <MapPicker value={point} onChange={setPoint} />
+                          <p className="text-[11.5px] text-[var(--color-text-secondary)]">
+                            Xaritani suring — nishon turgan joy sizning manzilingiz bo'ladi.
+                          </p>
+                        </>
+                      )}
+
+                      {/* Manzil matni har doim tahrirlanadi: xarita uni faqat
+                          taklif qiladi va ko'pincha uy raqamini bilmaydi. */}
+                      <Input
+                        value={address}
+                        onChange={(v) => {
+                          addressTouched.current = true;
+                          setAddress(v);
+                        }}
+                        placeholder="Ko'cha, uy raqami"
+                      />
+                      <Input
+                        value={note}
+                        onChange={setNote}
+                        placeholder="Mo'ljal: podyezd, qavat, domofon"
+                      />
+                    </div>
+                  </Section>
+                )}
+
+                <Section title="To'lov usuli">
+                  <div className="grid grid-cols-3 gap-2">
+                    {PAYMENT_METHODS.map((method) => (
+                      <button
+                        key={method.id}
+                        onClick={() => setPayment(method.id)}
+                        className={`rounded-[var(--radius-md)] border-2 px-2 py-3 text-center transition ${
+                          payment === method.id
+                            ? 'border-[var(--color-accent)] bg-[var(--color-surface)]'
+                            : 'border-transparent bg-[var(--color-surface)]'
+                        }`}
+                      >
+                        <span className="block text-xl">{method.emoji}</span>
+                        <span className="mt-1 block text-[12.5px] font-medium text-[var(--color-text)]">
+                          {method.label}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-[11.5px] text-[var(--color-text-secondary)]">
+                    To'lov buyurtmani qabul qilganda amalga oshiriladi.
+                  </p>
+                </Section>
+              </>
             )}
-
-            <Section title="To'lov usuli">
-              <div className="grid grid-cols-3 gap-2">
-                {PAYMENT_METHODS.map((method) => (
-                  <button
-                    key={method.id}
-                    onClick={() => setPayment(method.id)}
-                    className={`rounded-[var(--radius-md)] border-2 px-2 py-3 text-center transition ${
-                      payment === method.id
-                        ? 'border-[var(--color-accent)] bg-[var(--color-surface)]'
-                        : 'border-transparent bg-[var(--color-surface)]'
-                    }`}
-                  >
-                    <span className="block text-xl">{method.emoji}</span>
-                    <span className="mt-1 block text-[12.5px] font-medium text-[var(--color-text)]">
-                      {method.label}
-                    </span>
-                  </button>
-                ))}
-              </div>
-              <p className="mt-2 text-[11.5px] text-[var(--color-text-secondary)]">
-                To'lov buyurtmani qabul qilganda amalga oshiriladi.
-              </p>
-            </Section>
           </>
         )}
       </div>
 
-      {lines.length > 0 && (
+      {lines.length > 0 && availableOrderTypes.length > 0 && (
         <div
           className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-bg)] px-4 pt-3"
           style={{ paddingBottom: 'calc(var(--safe-bottom) + 14px)' }}

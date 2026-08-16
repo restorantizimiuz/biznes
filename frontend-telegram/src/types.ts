@@ -71,8 +71,9 @@ export interface MenuResponse {
   categories: MenuCategory[];
   active_order?: ActiveOrder | null;
   // Faqat getMenuByBusinessCode javobida keladi — uydan buyurtma sahifasi
-  // qaysi turlar (yetkazib berish/olib ketish) ochiqligini shundan biladi.
-  order_types?: { delivery: boolean; pickup: boolean };
+  // qaysi turlar (stolga/yetkazib berish/olib ketish) ochiqligini shundan
+  // biladi.
+  order_types?: { dine_in: boolean; delivery: boolean; pickup: boolean };
 }
 
 export interface CartLine {
