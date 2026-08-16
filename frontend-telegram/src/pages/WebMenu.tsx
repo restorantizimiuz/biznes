@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { getMenuByBusinessCode } from '../api';
+import { getTelegramWebApp, isRunningInTelegram } from '../telegram';
 import type { MenuResponse, Product } from '../types';
 import { useCart } from '../hooks/useCart';
 import Header from '../components/Header';
+import ProfileScreen from '../components/ProfileScreen';
 import SearchBar from '../components/SearchBar';
 import CategoryList from '../components/CategoryList';
 import ProductCard from '../components/ProductCard';
@@ -14,7 +16,9 @@ import { SkeletonGrid } from '../components/SkeletonCard';
 import WebCheckout from './WebCheckout';
 
 type Stage = 'loading' | 'error' | 'menu';
-type View = 'categories' | 'products' | 'cart';
+type View = 'categories' | 'products' | 'cart' | 'profile';
+
+const tg = getTelegramWebApp();
 
 /**
  * OCHIQ VEB MENYU — kafe shu havolani Instagram profiliga qo'yadi.
@@ -108,6 +112,18 @@ export default function WebMenu() {
     );
   }
 
+  // Profil faqat Telegram ichida ochiladi (tugmasi ham shunda ko'rinadi),
+  // shuning uchun bu yerda qo'shimcha tekshiruv shart emas.
+  if (view === 'profile') {
+    return (
+      <ProfileScreen
+        businessCode={businessCode}
+        onBack={() => setView('categories')}
+        onOpenOrder={(publicToken) => navigate(`/buyurtma/${publicToken}`)}
+      />
+    );
+  }
+
   if (view === 'cart') {
     return (
       <WebCheckout
@@ -151,7 +167,10 @@ export default function WebMenu() {
             </h1>
           </header>
         ) : (
-          <Header businessName={menu?.business_name ?? ''} />
+          <Header
+            businessName={menu?.business_name ?? ''}
+            onOpenProfile={isRunningInTelegram(tg) ? () => setView('profile') : undefined}
+          />
         )}
 
         <div className="px-4 pb-1">

@@ -6,6 +6,7 @@ import (
 	"cafesystem/backend/internal/notify"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -255,6 +256,13 @@ func (h *OrderHandler) UpdateKitchenStatus(c *fiber.Ctx) error {
 // shuning uchun yordamchilar ikkalasi bilan ham ishlay oladi.
 type dbExecutor interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+// dbQuerier - dbExecutor bilan bir xil maqsad, faqat bitta qator o'qiydigan
+// yordamchilar uchun (masalan upsertTelegramCustomer): u ham tranzaksiya
+// ichida, ham undan tashqarida chaqiriladi.
+type dbQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
 // recordStatusChange - buyurtma holati o'zgarishini tarixga yozadi.

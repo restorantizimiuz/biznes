@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"log"
 	"strings"
 	"time"
 
@@ -65,6 +66,16 @@ type webOrderRequest struct {
 	Lng           *float64       `json:"lng"`
 	PaymentMethod string         `json:"payment_method"` // cash | card | transfer
 	Items         []webOrderItem `json:"items"`
+	// InitData - **ixtiyoriy**. Bu sahifa Telegram ichida ham (bot /start
+	// tugmasi orqali Mini App sifatida), oddiy brauzerda ham (Instagram
+	// havolasi) ochiladi. Telegram ichida bo'lsa ilova initData yuboradi va
+	// buyurtma mijozning profiliga bog'lanadi — shunda u "Mening
+	// buyurtmalarim" ro'yxatida ko'rinadi.
+	//
+	// Bo'sh bo'lsa hech narsa o'zgarmaydi: endpoint auth talab qilmasligi
+	// bu funksiyaning asosiy sharti (hisob ochish talab qilinsa mijozlarning
+	// katta qismi yo'qoladi).
+	InitData string `json:"init_data"`
 }
 
 var validPaymentMethods = map[string]bool{"cash": true, "card": true, "transfer": true}
@@ -144,6 +155,22 @@ func (h *WebOrderHandler) CreateWebOrder(c *fiber.Ctx) error {
 		})
 	}
 
+	// Telegram ichidan kelgan bo'lsa buyurtmani mijoz profiliga bog'laymiz.
+	// Imzo noto'g'ri bo'lsa buyurtma **rad etilmaydi** — u shunchaki
+	// bog'lanmay qoladi: bu endpointning butun mazmuni auth talab qilmaslik.
+	// Faqat qayd etib qo'yamiz, chunki init_data yuborilgani mijoz Telegram
+	// ichida ekanini bildiradi va imzo xatosi sozlama muammosi bo'lishi mumkin.
+	var telegramCustomerID interface{}
+	if req.InitData != "" && h.Cfg.TelegramBotToken != "" {
+		if tgUser, err := verifyTelegramInitData(req.InitData, h.Cfg.TelegramBotToken, 24*time.Hour); err != nil {
+			log.Printf("veb buyurtma: initData tekshirilmadi (%v) — buyurtma profilga bog'lanmaydi", err)
+		} else if id, err := upsertTelegramCustomer(ctx, h.DB, businessID, tgUser); err != nil {
+			log.Printf("veb buyurtma: telegram mijozini saqlab bo'lmadi: %v", err)
+		} else {
+			telegramCustomerID = id
+		}
+	}
+
 	tx, err := h.DB.Begin(ctx)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
@@ -154,12 +181,13 @@ func (h *WebOrderHandler) CreateWebOrder(c *fiber.Ctx) error {
 	if err := tx.QueryRow(ctx,
 		`INSERT INTO orders (business_id, source, status, order_type,
 		                     customer_name, customer_phone, delivery_address, delivery_note,
-		                     delivery_lat, delivery_lng, preferred_payment_method)
-		 VALUES ($1,'online_web','new',$2,$3,$4,$5,$6,$7,$8,$9)
+		                     delivery_lat, delivery_lng, preferred_payment_method,
+		                     telegram_customer_id)
+		 VALUES ($1,'online_web','new',$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		 RETURNING id, public_token`,
 		businessID, req.OrderType, req.CustomerName, req.Phone,
 		nullIfEmpty(req.Address), nullIfEmpty(req.Note),
-		req.Lat, req.Lng, req.PaymentMethod,
+		req.Lat, req.Lng, req.PaymentMethod, telegramCustomerID,
 	).Scan(&orderID, &publicToken); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -205,6 +233,26 @@ func (h *WebOrderHandler) CreateWebOrder(c *fiber.Ctx) error {
 
 	if err := tx.Commit(ctx); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// Profil "o'rganadi": mijoz hozir kiritgan telefon/manzil profilda hali
+	// bo'sh bo'lsa saqlanadi, shunda keyingi buyurtmada forma o'zi to'ladi.
+	//
+	// COALESCE ataylab — bir martalik buyurtma manzili (masalan do'stinikiga
+	// yetkazish) mijoz profilda ataylab qo'ygan uy manzilini almashtirib
+	// yubormasligi kerak. O'zgartirish faqat profil sahifasidan qilinadi.
+	// Xatosi buyurtmani to'xtatmaydi: buyurtma allaqachon saqlangan.
+	if telegramCustomerID != nil {
+		if _, err := h.DB.Exec(ctx, `
+			UPDATE telegram_customers SET
+				phone            = COALESCE(phone, $2),
+				delivery_address = COALESCE(delivery_address, $3),
+				delivery_note    = COALESCE(delivery_note, $4)
+			WHERE id=$1`,
+			telegramCustomerID, nullIfEmpty(req.Phone),
+			nullIfEmpty(req.Address), nullIfEmpty(req.Note)); err != nil {
+			log.Printf("veb buyurtma: profilni to'ldirib bo'lmadi: %v", err)
+		}
 	}
 
 	writeAudit(ctx, h.DB, auditEntry{

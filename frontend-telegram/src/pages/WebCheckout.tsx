@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { createWebOrder, reverseGeocode } from '../api';
+import { createWebOrder, getTelegramProfile, reverseGeocode } from '../api';
 import type { CartLine, PaymentMethod } from '../types';
 import { formatMoney } from '../utils/format';
 import { getTelegramWebApp, isRunningInTelegram } from '../telegram';
@@ -108,6 +108,44 @@ export default function WebCheckout({
     setName(localStorage.getItem('customer_name') ?? '');
     setPhone(localStorage.getItem('customer_phone') ?? '');
   }, []);
+
+  // Telegram ichida bo'lsak profildagi saqlangan ma'lumot ham tortiladi.
+  //
+  // localStorage faqat shu brauzerda ishlaydi, profil esa serverda — mijoz
+  // telefonini almashtirsa yoki Telegram'ni boshqa qurilmada ochsa ham
+  // ma'lumot joyida qoladi. Manzil va mo'ljal umuman localStorage'da
+  // saqlanmaydi, ular faqat shu yerdan keladi.
+  //
+  // Faqat **bo'sh** maydonlar to'ldiriladi (setState funksional shaklda):
+  // so'rov qaytguncha mijoz yozib ulgurgan bo'lsa, yozganini bosib
+  // ketmaydi.
+  useEffect(() => {
+    if (!isRunningInTelegram(tg)) return;
+    let cancelled = false;
+    getTelegramProfile(businessCode)
+      .then(({ profile }) => {
+        if (cancelled) return;
+        const fillIfEmpty =
+          (value: string | null) =>
+          (current: string): string =>
+            current.trim() ? current : (value ?? '');
+        setName(fillIfEmpty(profile.full_name));
+        setPhone(fillIfEmpty(profile.phone));
+        setNote(fillIfEmpty(profile.delivery_note));
+        setAddress((current) => {
+          if (current.trim() || !profile.delivery_address) return current;
+          // Saqlangan manzil qo'lda kiritilgan hisoblanadi — aks holda
+          // xaritadan kelgan taklif uni darhol bosib ketardi.
+          addressTouched.current = true;
+          return profile.delivery_address;
+        });
+      })
+      // Profil yuklanmasa checkout baribir ishlayveradi — mijoz qo'lda yozadi.
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [businessCode]);
 
   // Xaritadagi nuqta o'zgarganda manzil taklifi yangilanadi.
   useEffect(() => {

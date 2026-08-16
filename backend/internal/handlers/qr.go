@@ -115,13 +115,13 @@ func (h *QRHandler) GetMenuByTableToken(c *fiber.Ctx) error {
 	token := c.Params("table_token")
 	ctx := context.Background()
 
-	var tableID, businessID, tableName, businessName string
+	var tableID, businessID, tableName, businessName, businessCode string
 	err := h.DB.QueryRow(ctx,
-		`SELECT t.id, f.business_id, t.name, b.name FROM tables t
+		`SELECT t.id, f.business_id, t.name, b.name, b.business_code FROM tables t
 		 JOIN floors f ON f.id = t.floor_id
 		 JOIN businesses b ON b.id = f.business_id
 		 WHERE t.qr_code_token=$1 AND t.is_deleted=false`, token,
-	).Scan(&tableID, &businessID, &tableName, &businessName)
+	).Scan(&tableID, &businessID, &tableName, &businessName, &businessCode)
 	if err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "Stol topilmadi"})
 	}
@@ -137,9 +137,13 @@ func (h *QRHandler) GetMenuByTableToken(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"table_id":      tableID,
-		"table_name":    tableName,
-		"business_id":   businessID,
+		"table_id":    tableID,
+		"table_name":  tableName,
+		"business_id": businessID,
+		// business_code mijoz profili uchun kerak: Mini App stol rejimida
+		// faqat stol tokenini biladi, profil endpointi esa kafeni kod
+		// bo'yicha topadi (GET /telegram/me?business_code=...).
+		"business_code": businessCode,
 		"business_name": businessName,
 		"categories":    result,
 		"active_order":  activeOrder,
@@ -173,6 +177,7 @@ func (h *QRHandler) GetMenuByBusinessCode(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{
 		"business_id":   businessID,
+		"business_code": businessCode,
 		"business_name": businessName,
 		"categories":    result,
 		// Uydan buyurtma sahifasi shu bayroqlarga qarab "Stolga buyurtma"/

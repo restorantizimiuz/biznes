@@ -12,7 +12,18 @@ interface TelegramThemeParams {
 
 interface TelegramWebApp {
   initData: string;
-  initDataUnsafe: { user?: { id: number; username?: string; first_name?: string } };
+  // initDataUnsafe imzolanmagan — hech qachon xavfsizlik qarori uchun
+  // ishlatilmaydi. Faqat ko'rinish uchun: avatar va ismni serverdan
+  // kutmasdan darhol chizish (server baribir initData imzosini tekshiradi).
+  initDataUnsafe: {
+    user?: {
+      id: number;
+      username?: string;
+      first_name?: string;
+      last_name?: string;
+      photo_url?: string;
+    };
+  };
   ready: () => void;
   expand: () => void;
   colorScheme: 'light' | 'dark';

@@ -61,12 +61,60 @@ export interface TrackedOrder {
   items: OrderItem[];
 }
 
+/**
+ * Mijozning shu kafedagi profili (Telegram Mini App).
+ *
+ * Ism va username Telegram'dan keladi va tahrirlanmaydi — ular Telegram'ning
+ * o'z ma'lumoti. Telefon, manzil va mo'ljal esa mijozning o'zi kiritadigan
+ * maydonlar: bir marta saqlansa, keyingi checkout avtomatik to'ladi.
+ */
+export interface CustomerProfile {
+  telegram_id: number;
+  username: string | null;
+  full_name: string;
+  phone: string | null;
+  delivery_address: string | null;
+  delivery_note: string | null;
+  orders_count: number;
+  /** Faqat to'langan buyurtmalar summasi. */
+  total_spent: number;
+  first_order_at: string | null;
+}
+
+/** Profildagi buyurtmalar tarixining bitta qatori. */
+export interface ProfileOrder {
+  id: string;
+  /**
+   * Kuzatuv havolasi kaliti. Faqat uydan berilgan (delivery/pickup)
+   * buyurtmada bo'ladi — stol buyurtmasida kuzatuv sahifasi ma'nosiz,
+   * shuning uchun backend uni `null` qaytaradi.
+   */
+  public_token: string | null;
+  created_at: string;
+  status: 'new' | 'activated' | 'paid' | 'cancelled';
+  kitchen_status: KitchenStatus;
+  order_type: OrderType;
+  table_name: string | null;
+  total_amount: number;
+  discount_amount: number;
+  final_amount: number;
+  items: OrderItem[];
+}
+
+export interface ProfileResponse {
+  profile: CustomerProfile;
+  orders: ProfileOrder[];
+}
+
 export interface MenuResponse {
   // table_id/table_name faqat stol-token orqali (getMenuByTableToken) so'ralganda keladi —
   // bot /start orqali (getMenuByBusinessCode) hali hech qanday stol tanlanmagan bo'ladi.
   table_id?: string;
   table_name?: string;
   business_id: string;
+  // Ikkala endpoint ham qaytaradi — profil so'rovi kafeni shu kod bo'yicha
+  // topadi (stol rejimida ilova faqat stol tokenini biladi).
+  business_code: string;
   business_name: string;
   categories: MenuCategory[];
   active_order?: ActiveOrder | null;

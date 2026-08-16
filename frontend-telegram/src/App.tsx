@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { createTelegramOrder, getMenuByTableToken } from './api';
-import { getTelegramWebApp } from './telegram';
+import { getTelegramWebApp, isRunningInTelegram } from './telegram';
 import type { ActiveOrder, MenuResponse, Product } from './types';
 import { useCart } from './hooks/useCart';
 import Header from './components/Header';
@@ -13,14 +14,16 @@ import CartScreen from './components/CartScreen';
 import ConfirmedScreen from './components/ConfirmedScreen';
 import CurrentBillPanel from './components/CurrentBillPanel';
 import EmptyState from './components/EmptyState';
+import ProfileScreen from './components/ProfileScreen';
 import { SkeletonGrid } from './components/SkeletonCard';
 
 const tg = getTelegramWebApp();
 
 type Stage = 'loading' | 'error' | 'menu' | 'confirmed';
 // Menyu ikki bosqichli: 'categories' — kategoriyalar ro'yxati,
-// 'products' — tanlangan kategoriya taomlari, 'cart' — savat.
-type View = 'categories' | 'products' | 'cart';
+// 'products' — tanlangan kategoriya taomlari, 'cart' — savat,
+// 'profile' — mijozning profili va buyurtmalar tarixi.
+type View = 'categories' | 'products' | 'cart' | 'profile';
 type CheckoutMessage = { type: 'error' | 'info'; text: string };
 
 /**
@@ -36,6 +39,7 @@ type CheckoutMessage = { type: 'error' | 'info'; text: string };
  * ishlaydi — qarang: pages/WebMenu.tsx (`/menyu/<business_code>`).
  */
 export default function App() {
+  const navigate = useNavigate();
   const tableToken = useMemo(
     () => new URLSearchParams(window.location.search).get('table') ?? '',
     [],
@@ -209,6 +213,24 @@ export default function App() {
     );
   }
 
+  // Profil butun ekranni egallaydi (menyu ustidan), shuning uchun stage
+  // tekshiruvlaridan keyin, savat/menyu chizilishidan oldin qaytariladi.
+  if (view === 'profile' && menu?.business_code) {
+    return (
+      <ProfileScreen
+        businessCode={menu.business_code}
+        onBack={() => setView('categories')}
+        // Kuzatuv sahifasi alohida marshrutda — stol rejimidan chiqib
+        // ketamiz, chunki u uydan berilgan buyurtmaga tegishli.
+        //
+        // navigate(), window.location emas: Telegram ichida to'liq sahifa
+        // qayta yuklanishi butun bootstrap'ni (ready(), tema) qaytadan
+        // ishga tushirardi. WebMenu.tsx da ham xuddi shunday.
+        onOpenOrder={(publicToken) => navigate(`/buyurtma/${publicToken}`)}
+      />
+    );
+  }
+
   if (stage === 'confirmed') {
     return (
       <ConfirmedScreen
@@ -260,7 +282,14 @@ export default function App() {
               </h1>
             </header>
           ) : (
-            <Header businessName={menu?.business_name ?? ''} />
+            <Header
+              businessName={menu?.business_name ?? ''}
+              onOpenProfile={
+                isRunningInTelegram(tg) && menu?.business_code
+                  ? () => setView('profile')
+                  : undefined
+              }
+            />
           )}
 
           {/* Stolda o'tirgan mijozga menyudan tashqari faqat joriy hisob kerak. */}

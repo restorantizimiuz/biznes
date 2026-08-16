@@ -66,6 +66,22 @@ func RegisterRoutes(app *fiber.App, db *pgxpool.Pool, rdb *redis.Client, hub *no
 	telegram := &TelegramHandler{DB: db, RDB: rdb, Hub: hub, Cfg: cfg}
 	api.Post("/telegram/:table_token/order", telegram.CreateOrder)
 
+	// Mijoz profili va buyurtmalar tarixi (Mini App).
+	//
+	// Auth — JWT emas, Telegram initData imzosi `Authorization: tma <initData>`
+	// sarlavhasida (qarang: telegram.go, authenticateTelegram). Kafe
+	// ?business_code= orqali aniqlanadi: mijoz har bir kafeda alohida yozuvga
+	// ega.
+	//
+	// Chastota chegarasi qo'yiladi, chunki endpoint ochiq: imzoni tekshirish
+	// HMAC hisoblashni, so'ng bir necha SQL so'rovni talab qiladi.
+	//
+	// MUHIM: bu yo'llar `/telegram/:table_token/order` bilan to'qnashmaydi —
+	// u POST va bir bosqich chuqurroq.
+	telegramProfileLimit := limiter.New(limiter.Config{Max: 60, Expiration: time.Minute})
+	api.Get("/telegram/me", telegramProfileLimit, telegram.GetProfile)
+	api.Patch("/telegram/me", telegramProfileLimit, telegram.UpdateProfile)
+
 	// ---------- Ochiq veb sahifa (Instagram havolasi) ----------
 	// Mijoz uyda o'tirib menyuni ko'radi va buyurtma beradi. Auth yo'q:
 	// hisob ochish talab qilinsa mijozlarning katta qismi yo'qoladi.

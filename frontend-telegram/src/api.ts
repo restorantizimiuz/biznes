@@ -1,5 +1,6 @@
 import axios from 'axios';
-import type { MenuResponse, PaymentMethod, TrackedOrder } from './types';
+import type { MenuResponse, PaymentMethod, ProfileResponse, TrackedOrder } from './types';
+import { getTelegramWebApp } from './telegram';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8080/api/v1';
 
@@ -69,7 +70,54 @@ export const createWebOrder = (body: {
   items: { product_id: string; quantity: number }[];
 }) =>
   apiClient
-    .post<{ order_id: string; public_token: string; total_amount: number }>('/web/order', body)
+    .post<{ order_id: string; public_token: string; total_amount: number }>('/web/order', {
+      ...body,
+      // Telegram ichida bo'lsak buyurtma mijoz profiliga bog'lanadi va
+      // "Mening buyurtmalarim" ro'yxatida ko'rinadi. Oddiy brauzerda bo'sh
+      // ketadi — backend uni ixtiyoriy deb qabul qiladi va buyurtmani
+      // baribir yaratadi (bu sahifada hisob ochish talab qilinmaydi).
+      init_data: getTelegramWebApp()?.initData ?? '',
+    })
+    .then((r) => r.data);
+
+/**
+ * MIJOZ PROFILI — faqat Telegram ichida ishlaydi.
+ *
+ * Auth JWT emas: `Authorization: tma <initData>` sarlavhasi. initData
+ * imzosini backend tekshiradi (telegram.go), shuning uchun mijoz o'zini
+ * boshqa kishi qilib ko'rsata olmaydi.
+ *
+ * Nega sarlavha, nega so'rov parametri emas: initData mijozning ismi va
+ * telegram ID'sini o'z ichiga oladi — URL'da bo'lsa loglarga tushib
+ * qolardi. `Authorization` backend CORS ro'yxatida allaqachon ruxsat
+ * etilgan.
+ */
+function telegramAuthHeaders(): Record<string, string> {
+  const initData = getTelegramWebApp()?.initData ?? '';
+  return { Authorization: `tma ${initData}` };
+}
+
+export const getTelegramProfile = (businessCode: string) =>
+  apiClient
+    .get<ProfileResponse>('/telegram/me', {
+      params: { business_code: businessCode },
+      headers: telegramAuthHeaders(),
+    })
+    .then((r) => r.data);
+
+/**
+ * Profilni saqlash. Yuborilmagan maydon o'zgarmaydi, bo'sh satr esa
+ * maydonni tozalaydi (backend ikkalasini ajratadi).
+ */
+export const updateTelegramProfile = (
+  businessCode: string,
+  body: { phone?: string; delivery_address?: string; delivery_note?: string },
+) =>
+  apiClient
+    .patch<{ success: boolean }>('/telegram/me', body, {
+      params: { business_code: businessCode },
+      headers: telegramAuthHeaders(),
+    })
     .then((r) => r.data);
 
 export const getWebOrderStatus = (token: string) =>
